@@ -1,10 +1,12 @@
 export type Criticality = 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
+export type PriorityBand = 'ORDER NOW' | 'RISK' | 'REVIEW' | 'OK';
 
 export interface InventoryItem {
+  id: string;
   itemId: string;
   itemName: string;
   description: string;
-  trackingType: 'SERIAL' | 'LOT' | 'NONE';
+  trackingType: 'SERIAL' | 'LOT' | 'QTY';
   inventoryType: 'RAW' | 'WIP' | 'FG' | 'MRO';
   currentInventory: number;
   averageDailyUsage: number;
@@ -16,6 +18,7 @@ export interface InventoryItem {
 }
 
 export interface InventoryTransaction {
+  id: string;
   date: string;
   itemId: string;
   serialNumber: string;
@@ -23,13 +26,14 @@ export interface InventoryTransaction {
   quantity: number;
   fromLocation: string;
   toLocation: string;
-  poOrProject: string;
+  reference: string;
   workOrder: string;
   employee: string;
   notes: string;
 }
 
 export interface SerialTraceRecord {
+  id: string;
   serialNumber: string;
   itemId: string;
   description: string;
@@ -46,6 +50,7 @@ export interface SerialTraceRecord {
 }
 
 export interface ProjectBuild {
+  id: string;
   projectId: string;
   customer: string;
   poNumber: string;
@@ -58,6 +63,7 @@ export interface ProjectBuild {
 }
 
 export interface ShipmentLog {
+  id: string;
   shipDate: string;
   project: string;
   poNumber: string;
@@ -73,6 +79,7 @@ export interface ShipmentLog {
 }
 
 export interface FreightQuote {
+  id: string;
   quoteId: string;
   date: string;
   originZip: string;
@@ -84,6 +91,7 @@ export interface FreightQuote {
 }
 
 export interface Vendor {
+  id: string;
   vendorName: string;
   category: string;
   contact: string;
@@ -95,6 +103,7 @@ export interface Vendor {
 }
 
 export interface PurchaseOrder {
+  id: string;
   poNumber: string;
   vendor: string;
   itemId: string;

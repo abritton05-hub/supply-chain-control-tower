@@ -14,7 +14,7 @@ export default function TransactionsPage() {
   const [type, setType] = useState('ALL');
 
   const rows = useMemo(
-    () => transactions.filter((t) => `${t.itemId} ${t.serialNumber} ${t.poOrProject} ${t.employee}`.toLowerCase().includes(query.toLowerCase()) && (type === 'ALL' || t.transactionType === type)),
+    () => transactions.filter((t) => `${t.itemId} ${t.serialNumber} ${t.reference} ${t.employee}`.toLowerCase().includes(query.toLowerCase()) && (type === 'ALL' || t.transactionType === type)),
     [query, type],
   );
 
@@ -34,7 +34,7 @@ export default function TransactionsPage() {
       </FilterBar>
       <DataTable>
         <thead><tr>{['Date','Item ID','Serial Number','Transaction Type','Quantity','From Location','To Location','PO / Project','Work Order','Employee','Notes'].map((h)=><th key={h}>{h}</th>)}</tr></thead>
-        <tbody>{rows.map((r, i)=><tr key={i}><td>{r.date}</td><td>{r.itemId}</td><td>{r.serialNumber}</td><td><StatusChip value={r.transactionType} /></td><td>{r.quantity}</td><td>{r.fromLocation}</td><td>{r.toLocation}</td><td>{r.poOrProject}</td><td>{r.workOrder}</td><td>{r.employee}</td><td>{r.notes}</td></tr>)}</tbody>
+        <tbody>{rows.map((r, i)=><tr key={i}><td>{r.date}</td><td>{r.itemId}</td><td>{r.serialNumber}</td><td><StatusChip value={r.transactionType} /></td><td>{r.quantity}</td><td>{r.fromLocation}</td><td>{r.toLocation}</td><td>{r.reference}</td><td>{r.workOrder}</td><td>{r.employee}</td><td>{r.notes}</td></tr>)}</tbody>
       </DataTable>
     </div>
   );

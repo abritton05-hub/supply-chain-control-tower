@@ -9,17 +9,39 @@ export function inventoryMetrics(item: InventoryItem) {
   const reorderNeeded = item.currentInventory <= reorderPoint ? 'YES' : 'OK';
   const daysCover = item.averageDailyUsage === 0 ? 999 : item.currentInventory / item.averageDailyUsage;
   const suggestedOrderQty = Math.max(0, reorderPoint - item.currentInventory);
+  const quantityAboveSafetyStock = item.currentInventory - item.safetyStock;
   const projectedStockoutDate = formatDate(new Date(today.getTime() + daysCover * 24 * 60 * 60 * 1000));
   const nextSuggestedOrderDate = formatDate(new Date(new Date(projectedStockoutDate).getTime() - item.leadTimeDays * 24 * 60 * 60 * 1000));
-  const riskScore = Math.round((item.criticality === 'CRITICAL' ? 40 : item.criticality === 'HIGH' ? 30 : item.criticality === 'NORMAL' ? 20 : 10) + item.leadTimeDays + Math.max(0, 25 - daysCover));
-  const priority = riskScore > 70 ? 'ORDER NOW' : riskScore > 55 ? 'RISK' : riskScore > 40 ? 'REVIEW' : 'OK';
-  return { reorderPoint, reorderNeeded, daysCover, suggestedOrderQty, projectedStockoutDate, nextSuggestedOrderDate, riskScore, priority };
+
+  let riskScore = 0;
+  riskScore += item.criticality === 'CRITICAL' ? 40 : item.criticality === 'HIGH' ? 25 : item.criticality === 'NORMAL' ? 10 : 0;
+  riskScore += daysCover <= 5 ? 30 : daysCover <= 10 ? 20 : daysCover <= 20 ? 10 : 0;
+  riskScore += reorderNeeded === 'YES' ? 20 : 0;
+  riskScore += item.currentInventory < item.safetyStock ? 25 : 0;
+  riskScore += quantityAboveSafetyStock <= 0 ? 20 : 0;
+  riskScore += item.leadTimeDays > 30 ? 15 : item.leadTimeDays >= 14 ? 10 : 0;
+
+  const priority = riskScore >= 80 ? 'ORDER NOW' : riskScore >= 55 ? 'RISK' : riskScore >= 30 ? 'REVIEW' : 'OK';
+
+  return {
+    reorderPoint,
+    reorderNeeded,
+    daysCover,
+    suggestedOrderQty,
+    quantityAboveSafetyStock,
+    projectedStockoutDate,
+    nextSuggestedOrderDate,
+    riskScore,
+    priority,
+  };
 }
 
 export function shipmentDelayFlag(ship: ShipmentLog) {
   if (ship.status === 'DELAYED') return 'YES';
-  if (!ship.actualDelivery) return 'PENDING';
-  return ship.actualDelivery > ship.estimatedDelivery ? 'YES' : 'NO';
+  if (!ship.estimatedDelivery) return 'NO';
+  if (!ship.actualDelivery && ship.status !== 'DELIVERED') return 'YES';
+  if (ship.actualDelivery && ship.actualDelivery > ship.estimatedDelivery) return 'YES';
+  return 'NO';
 }
 
 export function freightEstimates(quote: FreightQuote) {
@@ -37,7 +59,7 @@ export function freightEstimates(quote: FreightQuote) {
 }
 
 export function poDaysLate(po: PurchaseOrder) {
-  if (!po.poNumber || !po.expectedDelivery || po.status === 'CLOSED') return '';
+  if (!po.expectedDelivery || (po.status !== 'OPEN' && po.status !== 'PARTIAL' && po.status !== 'LATE')) return '';
   if (po.expectedDelivery >= formatDate(today)) return '';
   const diff = Math.floor((today.getTime() - new Date(po.expectedDelivery).getTime()) / (24 * 60 * 60 * 1000));
   return diff > 0 ? String(diff) : '';
