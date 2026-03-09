@@ -16,6 +16,7 @@ const links = [
   { href: '/open-pos', label: 'Open POs' },
   { href: '/analytics', label: 'Analytics' },
   { href: '/settings', label: 'Settings' },
+  { href: '/blueprint', label: 'Blueprint' },
 ];
 
 export function Sidebar() {
