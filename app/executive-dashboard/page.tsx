@@ -10,7 +10,11 @@ function BarChart({ title, data }: { title: string; data: MiniStat[] }) {
   const max = Math.max(...data.map((d) => d.value), 1);
   return (
     <article className="erp-card p-3">
+<<<<<<< HEAD
+      <h3 className="mb-3 border-b border-slate-200 pb-2 text-base font-semibold text-slate-900">{title}</h3>
+=======
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">{title}</h3>
+>>>>>>> origin/main
       <div className="space-y-2">
         {data.map((d) => (
           <div key={d.label} className="grid grid-cols-[140px_1fr_34px] items-center gap-2 text-xs">
@@ -29,8 +33,13 @@ function BarChart({ title, data }: { title: string; data: MiniStat[] }) {
 function PercentPanel({ label, value }: { label: string; value: number }) {
   return (
     <article className="erp-card p-3">
+<<<<<<< HEAD
+      <p className="mb-3 border-b border-slate-200 pb-2 text-base font-semibold text-slate-900">{label}</p>
+      <p className="text-2xl font-semibold text-slate-900">{value}%</p>
+=======
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-slate-900">{value}%</p>
+>>>>>>> origin/main
       <div className="mt-2 h-2 rounded bg-slate-200">
         <div className="h-2 rounded bg-emerald-600" style={{ width: `${value}%` }} />
       </div>
@@ -61,7 +70,11 @@ export default function DashboardPage() {
   const criticalityMix: MiniStat[] = ['CRITICAL', 'HIGH', 'NORMAL', 'LOW'].map((c) => ({ label: c, value: inventoryItems.filter((i) => i.criticality === c).length }));
   const latePoByVendor: MiniStat[] = purchaseOrders.filter((po) => poDaysLate(po) !== '').map((po) => ({ label: po.vendor, value: Number(poDaysLate(po)) || 0 }));
   const upcomingDeliveries: MiniStat[] = ['2026-03-05', '2026-03-06', '2026-03-07'].map((d) => ({ label: d, value: purchaseOrders.filter((po) => po.expectedDelivery === d).length }));
+<<<<<<< HEAD
+  const transactionsByType: MiniStat[] = ['RECEIPT', 'TRANSFER', 'ISSUE', 'BUILD COMPLETE', 'CYCLE COUNT'].map((t) => ({ label: t, value: transactions.filter((row) => row.movementType === t).length }));
+=======
   const transactionsByType: MiniStat[] = ['RECEIVED', 'TRANSFER', 'ISSUED', 'BUILT', 'COUNT'].map((t) => ({ label: t, value: transactions.filter((row) => row.transactionType === t).length }));
+>>>>>>> origin/main
   const projectBuildStatus: MiniStat[] = ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETE'].map((s) => ({ label: s, value: projectBuilds.filter((p) => p.buildStatus === s).length }));
 
   const percentAboveSafety = Math.round((enriched.filter((i) => i.quantityAboveSafetyStock > 0).length / enriched.length) * 100);
@@ -142,7 +155,11 @@ export default function DashboardPage() {
       </div>
 
       <section className="erp-card p-4">
+<<<<<<< HEAD
+        <h3 className="mb-3 border-b border-slate-200 pb-2 text-base font-semibold text-slate-900">48-Hour Operations Window</h3>
+=======
         <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">48-Hour Operations Window</h3>
+>>>>>>> origin/main
         <p className="mb-3 text-xs text-slate-500">Watchlist for deliveries, pickups, shortages, and project risk events due within the next 48 hours.</p>
         <div className="grid gap-2">
           {operationsWindow.length === 0 ? <div className="text-sm text-slate-500">No high-priority events in next 48 hours.</div> : operationsWindow.map((event, idx) => (

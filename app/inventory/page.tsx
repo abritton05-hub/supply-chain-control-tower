@@ -1,6 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+<<<<<<< HEAD
+import Link from 'next/link';
+=======
+>>>>>>> origin/main
 import { DataTable } from '@/components/data-table';
 import { FilterBar } from '@/components/filter-bar';
 import { KpiCard } from '@/components/kpi-card';
@@ -36,7 +40,11 @@ export default function InventoryPage() {
 
   return (
     <div>
+<<<<<<< HEAD
+      <SectionHeader title="Inventory Database" subtitle="Operational inventory visibility with reorder and risk logic" actions={<button className="rounded border border-slate-300 bg-white px-2 py-1 text-xs">Add Inventory</button>} />
+=======
       <SectionHeader title="Inventory Database" subtitle="Operational inventory visibility with reorder and risk logic" />
+>>>>>>> origin/main
       <div className="erp-banner">
         <p className="text-sm font-semibold">Inventory command view</p>
         <p className="text-xs text-slate-200">Computed planning fields are live from current usage, lead time, and safety stock assumptions.</p>
@@ -51,7 +59,11 @@ export default function InventoryPage() {
         <SearchInput value={query} onChange={setQuery} placeholder="Search Item ID, Name, Description" />
         <select className="rounded border border-slate-300 px-2 text-sm" value={critical} onChange={(e) => setCritical(e.target.value)}><option value="ALL">Critical: All</option><option>CRITICAL</option><option>HIGH</option><option>NORMAL</option><option>LOW</option></select>
         <select className="rounded border border-slate-300 px-2 text-sm" value={reorder} onChange={(e) => setReorder(e.target.value)}><option value="ALL">Reorder: All</option><option>YES</option><option>OK</option></select>
+<<<<<<< HEAD
+        <select className="rounded border border-slate-300 px-2 text-sm" value={tracking} onChange={(e) => setTracking(e.target.value)}><option value="ALL">Tracking: All</option><option>SERIALIZED</option><option>LOT</option><option>QUANTITY</option></select>
+=======
         <select className="rounded border border-slate-300 px-2 text-sm" value={tracking} onChange={(e) => setTracking(e.target.value)}><option value="ALL">Tracking: All</option><option>SERIAL</option><option>LOT</option><option>QTY</option></select>
+>>>>>>> origin/main
         <select className="rounded border border-slate-300 px-2 text-sm" value={department} onChange={(e) => setDepartment(e.target.value)}><option value="ALL">Department: All</option><option>Assembly</option><option>Warehouse</option><option>Service</option><option>Engineering</option></select>
       </FilterBar>
       <DataTable>
@@ -59,7 +71,11 @@ export default function InventoryPage() {
         <tbody>
           {rows.map((item) => (
             <tr key={item.itemId} className={item.reorderNeeded === 'YES' ? 'bg-rose-50' : ''}>
+<<<<<<< HEAD
+              <td className="font-semibold"><Link href={`/inventory/${item.itemId}`} className="text-cyan-700 hover:underline">{item.itemId}</Link></td><td>{item.itemName}</td><td>{item.description}</td><td>{item.trackingType}</td><td>{item.inventoryType}</td><td>{item.currentInventory}</td><td>{item.averageDailyUsage}</td><td>{item.leadTimeDays}</td><td>{item.safetyStock}</td><td className={item.quantityAboveSafetyStock <= 0 ? 'text-rose-700 font-semibold' : ''}>{item.quantityAboveSafetyStock}</td><td>{item.reorderPoint}</td><td><StatusChip value={item.reorderNeeded} /></td><td>{item.daysCover.toFixed(1)}</td><td>{item.projectedStockoutDate}</td><td>{item.nextSuggestedOrderDate}</td><td>{item.suggestedOrderQty}</td><td><StatusChip value={item.priority} /></td><td>{item.riskScore}</td><td><StatusChip value={item.criticality} /></td><td><Link href={`/vendors/${item.preferredVendor === 'Apex Electronics' ? 'v1' : item.preferredVendor === 'PowerGrid Supply' ? 'v2' : 'v3'}`} className="text-cyan-700 hover:underline">{item.preferredVendor}</Link></td><td>{item.department}</td>
+=======
               <td className="font-semibold">{item.itemId}</td><td>{item.itemName}</td><td>{item.description}</td><td>{item.trackingType}</td><td>{item.inventoryType}</td><td>{item.currentInventory}</td><td>{item.averageDailyUsage}</td><td>{item.leadTimeDays}</td><td>{item.safetyStock}</td><td className={item.quantityAboveSafetyStock <= 0 ? 'text-rose-700 font-semibold' : ''}>{item.quantityAboveSafetyStock}</td><td>{item.reorderPoint}</td><td><StatusChip value={item.reorderNeeded} /></td><td>{item.daysCover.toFixed(1)}</td><td>{item.projectedStockoutDate}</td><td>{item.nextSuggestedOrderDate}</td><td>{item.suggestedOrderQty}</td><td><StatusChip value={item.priority} /></td><td>{item.riskScore}</td><td><StatusChip value={item.criticality} /></td><td>{item.preferredVendor}</td><td>{item.department}</td>
+>>>>>>> origin/main
             </tr>
           ))}
         </tbody>

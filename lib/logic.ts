@@ -23,6 +23,13 @@ export function inventoryMetrics(item: InventoryItem) {
 
   const priority = riskScore >= 80 ? 'ORDER NOW' : riskScore >= 55 ? 'RISK' : riskScore >= 30 ? 'REVIEW' : 'OK';
 
+<<<<<<< HEAD
+  return { reorderPoint, reorderNeeded, daysCover, suggestedOrderQty, quantityAboveSafetyStock, projectedStockoutDate, nextSuggestedOrderDate, riskScore, priority };
+}
+
+export function generateSerialNumbers(prefix: string, separator: string, start: number, paddingLength: number, count: number) {
+  return Array.from({ length: count }, (_, idx) => `${prefix}${separator}${String(start + idx).padStart(paddingLength, '0')}`);
+=======
   return {
     reorderPoint,
     reorderNeeded,
@@ -34,6 +41,7 @@ export function inventoryMetrics(item: InventoryItem) {
     riskScore,
     priority,
   };
+>>>>>>> origin/main
 }
 
 export function shipmentDelayFlag(ship: ShipmentLog) {
@@ -49,6 +57,9 @@ export function freightEstimates(quote: FreightQuote) {
   const low = Math.round(base * 0.9);
   const avg = Math.round(base);
   const high = Math.round(base * 1.12);
+<<<<<<< HEAD
+  return { low, avg, high, costPerMile: (avg / quote.miles).toFixed(2), costPerLb: (avg / quote.weight).toFixed(2) };
+=======
   return {
     low,
     avg,
@@ -56,6 +67,7 @@ export function freightEstimates(quote: FreightQuote) {
     costPerMile: (avg / quote.miles).toFixed(2),
     costPerLb: (avg / quote.weight).toFixed(2),
   };
+>>>>>>> origin/main
 }
 
 export function poDaysLate(po: PurchaseOrder) {
