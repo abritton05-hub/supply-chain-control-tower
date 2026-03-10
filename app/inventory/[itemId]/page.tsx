@@ -1,12 +1,18 @@
+<<<<<<< HEAD
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ItemDetailTabs } from '@/components/item-detail-tabs';
 import { inventoryItems } from '@/lib/data/mock-data';
 import { inventoryMetrics } from '@/lib/logic';
+=======
+import { notFound } from 'next/navigation';
+import { inventoryItems } from '@/lib/data/mock-data';
+>>>>>>> origin/main
 
 export default function InventoryItemPage({ params }: { params: { itemId: string } }) {
   const item = inventoryItems.find((row) => row.itemId === params.itemId);
   if (!item) return notFound();
+<<<<<<< HEAD
 
   const metrics = inventoryMetrics(item);
 
@@ -43,4 +49,7 @@ export default function InventoryItemPage({ params }: { params: { itemId: string
       <ItemDetailTabs itemId={item.itemId} />
     </div>
   );
+=======
+  return <div className="erp-card p-4"><h2 className="text-lg font-semibold">{item.itemId}</h2><p className="text-sm text-slate-600">{item.itemName} · {item.description}</p></div>;
+>>>>>>> origin/main
 }

@@ -1,6 +1,9 @@
 'use client';
 import { useMemo, useState } from 'react';
+<<<<<<< HEAD
 import Link from 'next/link';
+=======
+>>>>>>> origin/main
 import { DataTable } from '@/components/data-table';
 import { FilterBar } from '@/components/filter-bar';
 import { SearchInput } from '@/components/search-input';
@@ -23,9 +26,15 @@ export default function SerialTraceabilityPage() {
         <SearchInput value={query} onChange={setQuery} placeholder="Search serial number" />
         <select className="rounded border border-slate-300 px-2 text-sm" value={project} onChange={(e)=>setProject(e.target.value)}><option value="ALL">Project: All</option>{[...new Set(serialRecords.map((r)=>r.project))].map((p)=><option key={p}>{p}</option>)}</select>
         <select className="rounded border border-slate-300 px-2 text-sm" value={customer} onChange={(e)=>setCustomer(e.target.value)}><option value="ALL">Customer: All</option>{[...new Set(serialRecords.map((r)=>r.customer))].map((c)=><option key={c}>{c}</option>)}</select>
+<<<<<<< HEAD
         <select className="rounded border border-slate-300 px-2 text-sm" value={status} onChange={(e)=>setStatus(e.target.value)}><option value="ALL">Status: All</option>{[...new Set(serialRecords.map((r)=>r.status))].map((st)=><option key={st}>{st}</option>)}</select>
       </FilterBar>
       <DataTable><thead><tr>{['Serial Number','Item ID','Description','PO Number','Project','Date Received','Current Location','Work Order','Build Status','Date Shipped','Tracking Number','Customer','Status'].map((h)=><th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((r)=><tr key={r.serialNumber}><td><Link href={`/serial-traceability/${r.serialNumber}`} className="text-cyan-700 font-semibold hover:underline">{r.serialNumber}</Link></td><td><Link href={`/inventory/${r.itemId}`} className="text-cyan-700 hover:underline">{r.itemId}</Link></td><td>{r.description}</td><td><Link href={`/open-pos/${r.poNumber}`} className="text-cyan-700 hover:underline">{r.poNumber}</Link></td><td><Link href={`/projects/${r.project}`} className="text-cyan-700 hover:underline">{r.project}</Link></td><td>{r.dateReceived}</td><td>{r.currentLocation}</td><td>{r.workOrder}</td><td>{r.buildStatus}</td><td>{r.dateShipped ?? '-'}</td><td>{r.trackingNumber ?? '-'}</td><td>{r.customer}</td><td><StatusChip value={r.status} /></td></tr>)}</tbody></DataTable>
+=======
+        <select className="rounded border border-slate-300 px-2 text-sm" value={status} onChange={(e)=>setStatus(e.target.value)}><option value="ALL">Status: All</option><option>OPEN</option><option>IN_BUILD</option><option>SHIPPED</option><option>EXCEPTION</option></select>
+      </FilterBar>
+      <DataTable><thead><tr>{['Serial Number','Item ID','Description','PO Number','Project','Date Received','Current Location','Work Order','Build Status','Date Shipped','Tracking Number','Customer','Status'].map((h)=><th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((r)=><tr key={r.serialNumber}><td>{r.serialNumber}</td><td>{r.itemId}</td><td>{r.description}</td><td>{r.poNumber}</td><td>{r.project}</td><td>{r.dateReceived}</td><td>{r.currentLocation}</td><td>{r.workOrder}</td><td>{r.buildStatus}</td><td>{r.dateShipped ?? '-'}</td><td>{r.trackingNumber ?? '-'}</td><td>{r.customer}</td><td><StatusChip value={r.status} /></td></tr>)}</tbody></DataTable>
+>>>>>>> origin/main
     </div>
   );
 }

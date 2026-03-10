@@ -1,6 +1,12 @@
+<<<<<<< HEAD
 import { freightQuotes, inventoryItems, projectBuilds, purchaseOrders, serialRecords, shipmentLog, users, vendors } from '@/lib/data/mock-data';
 
 export type SearchGroup = 'Items' | 'Serials' | 'Projects' | 'Purchase Orders' | 'Vendors' | 'Shipments' | 'Freight Quotes' | 'Users' | 'Pages';
+=======
+import { freightQuotes, inventoryItems, projectBuilds, purchaseOrders, serialRecords, shipmentLog, vendors } from '@/lib/data/mock-data';
+
+export type SearchGroup = 'Items' | 'Serials' | 'Projects' | 'Purchase Orders' | 'Vendors' | 'Shipments' | 'Freight Quotes' | 'Pages';
+>>>>>>> origin/main
 
 export interface SearchResult {
   id: string;
@@ -29,7 +35,10 @@ const pages = [
   ['Open POs', '/open-pos'],
   ['Locations', '/locations'],
   ['Departments', '/departments'],
+<<<<<<< HEAD
   ['Users', '/users'],
+=======
+>>>>>>> origin/main
 ] as const;
 
 export const globalSearchIndex: SearchResult[] = [
@@ -87,6 +96,7 @@ export const globalSearchIndex: SearchResult[] = [
     route: `/shipment-log/${ship.id}`,
     haystack: [ship.id, ship.project, ship.poNumber, ship.customer, ship.trackingNumber, ship.status],
   })),
+<<<<<<< HEAD
   ...users.map((user) => ({
     id: `user-${user.id}`,
     group: 'Users' as const,
@@ -96,6 +106,8 @@ export const globalSearchIndex: SearchResult[] = [
     route: `/users/${user.id}`,
     haystack: [user.name, user.email, user.role],
   })),
+=======
+>>>>>>> origin/main
   ...freightQuotes.map((quote) => ({
     id: `freight-${quote.quoteId}`,
     group: 'Freight Quotes' as const,
@@ -142,7 +154,11 @@ export function searchGlobal(query: string) {
 }
 
 export function groupSearchResults(results: SearchResult[]) {
+<<<<<<< HEAD
   const order: SearchGroup[] = ['Items', 'Serials', 'Projects', 'Purchase Orders', 'Vendors', 'Shipments', 'Freight Quotes', 'Users', 'Pages'];
+=======
+  const order: SearchGroup[] = ['Items', 'Serials', 'Projects', 'Purchase Orders', 'Vendors', 'Shipments', 'Freight Quotes', 'Pages'];
+>>>>>>> origin/main
   return order
     .map((group) => ({ group, rows: results.filter((row) => row.group === group) }))
     .filter((section) => section.rows.length > 0);
