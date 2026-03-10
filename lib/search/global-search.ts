@@ -13,18 +13,22 @@ export interface SearchResult {
 }
 
 const pages = [
-  ['Dashboard', '/dashboard'],
+  ['Executive Dashboard', '/executive-dashboard'],
   ['Control Tower', '/control-tower'],
-  ['Inventory', '/inventory'],
-  ['Transactions', '/transactions'],
+  ['Inventory Risk', '/inventory-risk'],
+  ['Freight Dashboard', '/freight-dashboard'],
+  ['Project Dashboard', '/project-dashboard'],
+  ['Traceability Dashboard', '/traceability-dashboard'],
+  ['Inventory Database', '/inventory'],
+  ['Inventory Transactions', '/transactions'],
   ['Serial Traceability', '/serial-traceability'],
-  ['Projects', '/projects'],
+  ['Projects / Builds', '/projects-builds'],
   ['Shipment Log', '/shipment-log'],
   ['Freight Quotes', '/freight-quotes'],
   ['Vendors', '/vendors'],
   ['Open POs', '/open-pos'],
-  ['Analytics', '/analytics'],
-  ['Settings', '/settings'],
+  ['Locations', '/locations'],
+  ['Departments', '/departments'],
 ] as const;
 
 export const globalSearchIndex: SearchResult[] = [
