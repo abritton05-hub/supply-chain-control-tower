@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-slate-100 text-slate-900;
+}
+
+.erp-card {
+  @apply rounded-md border border-slate-200 bg-white shadow-sm;
+}
+
+.erp-table th {
+  @apply sticky top-0 z-10 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600;
+}
+
+.erp-table td {
+  @apply whitespace-nowrap border-t border-slate-200 px-3 py-2 text-sm text-slate-700;
+}
+
+.erp-banner {
+  @apply mb-4 rounded-md border border-slate-300 bg-gradient-to-r from-slate-900 to-slate-700 px-4 py-3 text-slate-100;
+}
+
+.erp-subtle {
+  @apply text-xs uppercase tracking-wide text-slate-500;
+}
