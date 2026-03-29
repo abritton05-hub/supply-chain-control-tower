@@ -1,14 +1,16 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { EditableUser, getCurrentUserRecord } from '@/lib/state/mock-users';
 
 type NavGroup = {
   title: string;
   links: { href: string; label: string }[];
 };
 
-const nav: NavGroup[] = [
+const baseNav: NavGroup[] = [
   {
     title: 'Dashboards',
     links: [
@@ -45,6 +47,21 @@ const nav: NavGroup[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [currentUser, setCurrentUser] = useState<EditableUser | null>(null);
+
+  useEffect(() => {
+    setCurrentUser(getCurrentUserRecord());
+  }, []);
+
+  const nav = useMemo(() => {
+    if (!currentUser) return baseNav;
+    if (currentUser.role === 'System Admin') return baseNav;
+
+    return baseNav.map((group) => ({
+      ...group,
+      links: group.links.filter((link) => link.href !== '/users'),
+    }));
+  }, [currentUser]);
 
   return (
     <aside className="h-screen w-72 flex-shrink-0 overflow-auto border-r border-slate-800 bg-slate-900 p-4 text-slate-200">
