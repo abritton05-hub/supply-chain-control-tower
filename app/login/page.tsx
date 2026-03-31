@@ -1,81 +1,104 @@
+// app/login/page.tsx
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { loginUser } from '@/lib/state/mock-users';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('Abritton05@gmail.com');
-  const [password, setPassword] = useState('Password123');
-  const [showPassword, setShowPassword] = useState(false);
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleLogin = () => {
-    const user = loginUser(email, password);
-
-    if (!user) {
-      setError('Invalid email or password.');
-      return;
-    }
-
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setLoading(true);
     setError('');
-    router.push('/executive-dashboard');
-  };
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data?.message || 'Login failed');
+        setLoading(false);
+        return;
+      }
+
+      router.push('/dashboard');
+      router.refresh();
+    } catch {
+      setError('Something went wrong. Please try again.');
+      setLoading(false);
+    }
+  }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
-      <div className="w-full max-w-md rounded border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="mb-1 text-2xl font-semibold text-slate-900">Supply Chain Control Tower</h1>
-        <p className="mb-6 text-sm text-slate-500">Sign in to continue</p>
+    <main className="min-h-screen bg-slate-100 flex items-center justify-center px-4">
+      <div className="w-full max-w-2xl rounded-lg border bg-white p-8 shadow-sm">
+        <h1 className="text-4xl font-semibold text-slate-900">
+          Supply Chain Control Tower
+        </h1>
+        <p className="mt-2 text-lg text-slate-600">Sign in to continue</p>
 
-        <div className="space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          className="mt-8 space-y-6"
+          autoComplete="off"
+        >
           <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700">Email</label>
+            <label htmlFor="email" className="mb-2 block text-sm font-medium text-slate-900">
+              Email
+            </label>
             <input
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              id="email"
+              name="email"
+              type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@company.com"
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-slate-300 px-4 py-3 text-lg outline-none focus:border-sky-600"
+              placeholder=""
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700">Password</label>
-            <div className="flex rounded border border-slate-300 bg-white">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                className="w-full rounded-l px-3 py-2 text-sm outline-none"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((prev) => !prev)}
-                className="border-l border-slate-300 px-3 text-sm text-slate-600 hover:bg-slate-50"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                title={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? '🙈' : '👁️'}
-              </button>
-            </div>
+            <label htmlFor="password" className="mb-2 block text-sm font-medium text-slate-900">
+              Password
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="off"
+              className="w-full rounded-md border border-slate-300 px-4 py-3 text-lg outline-none focus:border-sky-600"
+              placeholder=""
+            />
           </div>
 
           {error ? (
-            <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {error}
-            </div>
+            <p className="text-sm text-red-600">{error}</p>
           ) : null}
 
           <button
-            onClick={handleLogin}
-            className="w-full rounded border border-cyan-600 bg-cyan-600 px-3 py-2 text-sm font-semibold text-white"
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-md bg-sky-700 px-4 py-3 text-lg font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
           >
-            Log In
+            {loading ? 'Logging in...' : 'Log In'}
           </button>
-        </div>
+        </form>
       </div>
-    </div>
+    </main>
   );
 }
