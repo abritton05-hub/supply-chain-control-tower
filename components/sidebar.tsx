@@ -1,16 +1,4 @@
-'use client';
-
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
-import { EditableUser, getCurrentUserRecord } from '@/lib/state/mock-users';
-
-type NavGroup = {
-  title: string;
-  links: { href: string; label: string }[];
-};
-
-const baseNav: NavGroup[] = [
+const nav: NavGroup[] = [
   {
     title: 'Dashboards',
     links: [
@@ -25,6 +13,7 @@ const baseNav: NavGroup[] = [
   {
     title: 'Operations',
     links: [
+      { href: '/inventory', label: 'Inventory Database' },
       { href: '/transactions', label: 'Inventory Transactions' },
       { href: '/serial-traceability', label: 'Serial Traceability' },
       { href: '/projects-builds', label: 'Projects / Builds' },
@@ -36,59 +25,18 @@ const baseNav: NavGroup[] = [
   {
     title: 'Master Data',
     links: [
-      { href: '/inventory', label: 'Inventory Database' },
       { href: '/vendors', label: 'Vendors' },
       { href: '/locations', label: 'Locations' },
       { href: '/departments', label: 'Departments' },
+    ],
+  },
+  {
+    title: 'Admin',
+    adminOnly: true,
+    links: [
+      { href: '/rootstock', label: 'Rootstock Master' },
       { href: '/users', label: 'Users' },
+      { href: '/settings', label: 'Settings' },
     ],
   },
 ];
-
-export function Sidebar() {
-  const pathname = usePathname();
-  const [currentUser, setCurrentUser] = useState<EditableUser | null>(null);
-
-  useEffect(() => {
-    setCurrentUser(getCurrentUserRecord());
-  }, []);
-
-  const nav = useMemo(() => {
-    if (!currentUser) return baseNav;
-    if (currentUser.role === 'System Admin') return baseNav;
-
-    return baseNav.map((group) => ({
-      ...group,
-      links: group.links.filter((link) => link.href !== '/users'),
-    }));
-  }, [currentUser]);
-
-  return (
-    <aside className="h-screen w-72 flex-shrink-0 overflow-auto border-r border-slate-800 bg-slate-900 p-4 text-slate-200">
-      <h1 className="mb-6 text-sm font-semibold uppercase tracking-widest text-slate-400">Supply Chain Control Tower</h1>
-      <nav className="space-y-5">
-        {nav.map((group) => (
-          <section key={group.title}>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{group.title}</p>
-            <div className="space-y-1">
-              {group.links.map((link) => {
-                const active = pathname === link.href;
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={`block rounded px-3 py-2 text-sm transition ${
-                      active ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                    }`}
-                  >
-                    {link.label}
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-      </nav>
-    </aside>
-  );
-}
