@@ -1,42 +1,25 @@
-const nav: NavGroup[] = [
-  {
-    title: 'Dashboards',
-    links: [
-      { href: '/executive-dashboard', label: 'Executive Dashboard' },
-      { href: '/control-tower', label: 'Control Tower' },
-      { href: '/inventory-risk', label: 'Inventory Risk' },
-      { href: '/freight-dashboard', label: 'Freight Dashboard' },
-      { href: '/project-dashboard', label: 'Project Dashboard' },
-      { href: '/traceability-dashboard', label: 'Traceability Dashboard' },
-    ],
-  },
-  {
-    title: 'Operations',
-    links: [
-      { href: '/inventory', label: 'Inventory Database' },
-      { href: '/transactions', label: 'Inventory Transactions' },
-      { href: '/serial-traceability', label: 'Serial Traceability' },
-      { href: '/projects-builds', label: 'Projects / Builds' },
-      { href: '/shipment-log', label: 'Shipment Log' },
-      { href: '/freight-quotes', label: 'Freight Quotes' },
-      { href: '/open-pos', label: 'Open POs' },
-    ],
-  },
-  {
-    title: 'Master Data',
-    links: [
-      { href: '/vendors', label: 'Vendors' },
-      { href: '/locations', label: 'Locations' },
-      { href: '/departments', label: 'Departments' },
-    ],
-  },
-  {
-    title: 'Admin',
-    adminOnly: true,
-    links: [
-      { href: '/rootstock', label: 'Rootstock Master' },
-      { href: '/users', label: 'Users' },
-      { href: '/settings', label: 'Settings' },
-    ],
-  },
-];
+'use client';
+
+import Link from 'next/link';
+
+export function Sidebar() {
+  return (
+    <aside className="h-screen w-72 flex-shrink-0 border-r border-slate-800 bg-slate-900 p-4 text-slate-200">
+      <h1 className="mb-6 text-sm font-semibold uppercase tracking-widest text-slate-400">
+        Supply Chain Control Tower
+      </h1>
+
+      <nav className="space-y-2">
+        <Link href="/executive-dashboard" className="block rounded px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-white">
+          Executive Dashboard
+        </Link>
+        <Link href="/inventory" className="block rounded px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-white">
+          Inventory
+        </Link>
+        <Link href="/vendors" className="block rounded px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-white">
+          Vendors
+        </Link>
+      </nav>
+    </aside>
+  );
+}

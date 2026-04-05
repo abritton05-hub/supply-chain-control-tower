@@ -2,12 +2,12 @@ import { redirect } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth/session';
 import { Sidebar } from '@/components/sidebar';
 
-export default async function ProtectedLayout({
+export default function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
- const loggedIn = isAuthenticated();
+  const loggedIn = isAuthenticated();
 
   if (!loggedIn) {
     redirect('/login');
