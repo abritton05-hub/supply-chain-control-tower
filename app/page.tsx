@@ -1,5 +1,3 @@
-import { redirect } from 'next/navigation';
-
 export default function Home() {
-  redirect('/executive-dashboard');
+  return <div style={{ padding: 20 }}>HOME WORKS</div>;
 }

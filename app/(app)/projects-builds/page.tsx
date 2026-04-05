@@ -1,3 +1,3 @@
-import ProjectsPage from '@/app/(app)/projects/page';
-
-export default ProjectsPage;
+export default function TestPage() {
+  return <div style={{ padding: 20 }}>Projects Builds is working</div>;
+}
