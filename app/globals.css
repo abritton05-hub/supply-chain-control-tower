@@ -29,3 +29,27 @@ body {
 .erp-subtle {
   @apply text-xs uppercase tracking-wide text-slate-500;
 }
+.erp-table tbody tr:hover td {
+  @apply bg-slate-50;
+}
+
+.erp-table td:first-child,
+.erp-table th:first-child {
+  @apply pl-5;
+}
+
+.erp-table td:last-child,
+.erp-table th:last-child {
+  @apply pr-5;
+}
+.erp-button {
+  @apply rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-slate-900;
+}
+
+.erp-button-primary {
+  @apply rounded-xl border border-cyan-700 bg-cyan-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-cyan-800;
+}
+
+.erp-panel {
+  @apply rounded-2xl border border-slate-300 bg-white shadow-sm;
+}

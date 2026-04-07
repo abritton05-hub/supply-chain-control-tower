@@ -1,27 +1,16 @@
 'use client';
 
-import Image from 'next/image';
-import Link from 'next/link';
-import { ProfileMenu } from '@/components/profile-menu';
-
 export function TopHeader() {
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4">
-      <Link
-        href="/rootstock"
-        className="flex items-center gap-2 hover:opacity-90"
-      >
-        <Image
-          src="/images/scc-tower-logo.png"
-          alt="SCC Tower"
-          width={140}
-          height={30}
-          className="h-7 w-auto"
-        />
-      </Link>
+    <header className="flex items-center justify-between border-b border-slate-300 bg-white/80 px-6 py-4 backdrop-blur-sm">
+      <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+        Supply Chain Control Tower
+      </div>
 
       <div className="flex items-center gap-3">
-        <ProfileMenu />
+        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-sm font-semibold text-slate-700 shadow-sm">
+          AB
+        </div>
       </div>
     </header>
   );

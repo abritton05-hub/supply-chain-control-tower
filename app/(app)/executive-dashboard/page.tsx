@@ -452,10 +452,10 @@ export default function DashboardPage() {
       
 
       <SectionHeader
-        title="Dashboard"
-        subtitle=""
+  title="Executive Dashboard"
+  subtitle="Control tower summary for urgent actions, trends, risk, and 48-hour operations."
         actions={
-          <select className="rounded border border-slate-300 bg-white px-2 py-1 text-xs">
+          <select className="erp-button">
             <option>All</option>
             <option>Warehouse A</option>
             <option>Warehouse B</option>
