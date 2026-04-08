@@ -14,9 +14,13 @@ export default function ProtectedLayout({
     redirect('/login');
   }
 
+  // TEMPORARY:
+  // Change this to real role logic when your auth/session exposes user roles.
+  const isAdmin = true;
+
   return (
     <div className="flex min-h-screen bg-slate-200">
-      <Sidebar />
+      <Sidebar isAdmin={isAdmin} />
       <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-200">
         <div className="space-y-4 px-6 py-6">
           <TopHeader />

@@ -5,7 +5,11 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-const navSections = [
+type SidebarProps = {
+  isAdmin?: boolean;
+};
+
+const baseNavSections = [
   {
     title: 'Dashboards',
     links: [
@@ -35,13 +39,19 @@ const navSections = [
       { href: '/vendors', label: 'Vendors', icon: '🏢' },
       { href: '/locations', label: 'Locations', icon: '📍' },
       { href: '/departments', label: 'Departments', icon: '🧩' },
-      { href: '/users', label: 'Users', icon: '👤' },
-      { href: '/rootstock', label: 'Rootstock Master', icon: '🧠' },
     ],
   },
 ];
 
-export function Sidebar() {
+const adminSection = {
+  title: 'Admin',
+  links: [
+    { href: '/users', label: 'Users', icon: '👤' },
+    { href: '/rootstock', label: 'Rootstock Master', icon: '🧠' },
+  ],
+};
+
+export function Sidebar({ isAdmin = false }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -53,6 +63,8 @@ export function Sidebar() {
   useEffect(() => {
     localStorage.setItem('sidebar-collapsed', String(collapsed));
   }, [collapsed]);
+
+  const navSections = isAdmin ? [...baseNavSections, adminSection] : baseNavSections;
 
   return (
     <aside
@@ -83,7 +95,7 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => setCollapsed(true)}
-              className="rounded-xl border border-slate-300 bg-white px-2 py-1 text-sm shadow-sm hover:bg-slate-50"
+              className="mt-10 rounded-xl border border-slate-300 bg-white px-2 py-1 text-sm shadow-sm hover:bg-slate-50"
               aria-label="Collapse sidebar"
               title="Collapse sidebar"
             >
