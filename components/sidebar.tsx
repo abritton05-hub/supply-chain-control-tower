@@ -36,6 +36,7 @@ const navSections = [
       { href: '/locations', label: 'Locations', icon: '📍' },
       { href: '/departments', label: 'Departments', icon: '🧩' },
       { href: '/users', label: 'Users', icon: '👤' },
+      { href: '/rootstock', label: 'Rootstock Master', icon: '🧠' },
     ],
   },
 ];
@@ -46,9 +47,7 @@ export function Sidebar() {
 
   useEffect(() => {
     const saved = localStorage.getItem('sidebar-collapsed');
-    if (saved === 'true') {
-      setCollapsed(true);
-    }
+    if (saved === 'true') setCollapsed(true);
   }, []);
 
   useEffect(() => {
@@ -57,7 +56,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`h-screen flex-shrink-0 border-r border-slate-300 bg-gradient-to-b from-slate-100 to-slate-200 text-slate-900 transition-all duration-300 ${
+      className={`h-screen flex-shrink-0 border-r border-slate-300 bg-white text-slate-900 transition-all duration-300 ${
         collapsed ? 'w-24 p-3' : 'w-80 p-6'
       }`}
     >
@@ -69,17 +68,17 @@ export function Sidebar() {
         {!collapsed ? (
           <>
             <Link href="/executive-dashboard" className="block w-full">
-  <div className="relative mx-auto h-[190px] w-full max-w-[260px]">
-    <Image
-      src="/logo.png"
-      alt="SCC Tower"
-      fill
-      priority
-      className="object-contain"
-      sizes="260px"
-    />
-  </div>
-</Link>
+              <div className="relative mx-auto h-[190px] w-full max-w-[260px]">
+                <Image
+                  src="/logo.png"
+                  alt="SCC Tower"
+                  fill
+                  priority
+                  className="object-contain"
+                  sizes="260px"
+                />
+              </div>
+            </Link>
 
             <button
               type="button"
@@ -128,8 +127,8 @@ export function Sidebar() {
                         : 'px-4 py-3 text-[16px] font-semibold'
                     } ${
                       active
-                        ? 'bg-white text-slate-950 shadow-sm'
-                        : 'text-slate-900 hover:bg-white/80 hover:text-slate-950'
+                        ? 'bg-slate-100 text-slate-950 shadow-md ring-1 ring-slate-200'
+                        : 'text-slate-900 hover:bg-slate-100 hover:text-slate-950'
                     }`}
                   >
                     <span className="text-lg">{link.icon}</span>

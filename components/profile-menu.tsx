@@ -1,45 +1,47 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 export function ProfileMenu() {
-  const [open, setOpen] = useState(false);
   const router = useRouter();
+  const [open, setOpen] = useState(false);
 
-  function handleLogout() {
-    document.cookie = 'auth-token=; path=/; max-age=0';
+  async function handleLogout() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
     router.push('/login');
+    router.refresh();
   }
 
   return (
     <div className="relative">
-      {/* Profile Circle */}
       <button
-        onClick={() => setOpen(!open)}
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-700 text-white"
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
       >
-        A
+        AB
       </button>
 
-      {/* Dropdown */}
-      {open && (
-        <div className="absolute right-0 mt-2 w-40 rounded-md border bg-white shadow-lg">
+      {open ? (
+        <div className="absolute right-0 z-50 mt-2 w-44 rounded-xl border border-slate-300 bg-white p-2 shadow-lg">
           <button
-            onClick={() => alert('Profile modal coming next')}
-            className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-100"
+            type="button"
+            className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
           >
             Profile
           </button>
-
           <button
+            type="button"
             onClick={handleLogout}
-            className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-slate-100"
+            className="block w-full rounded-lg px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50"
           >
             Logout
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

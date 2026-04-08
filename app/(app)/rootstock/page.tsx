@@ -5,7 +5,7 @@ export default function RootstockPage() {
     <div className="space-y-4">
       <SectionHeader
         title="Rootstock Master"
-        subtitle="Global search and audit view for the system."
+        subtitle="Global search and audit view for inventory, vendors, POs, shipments, users, and transactions."
       />
 
       <div className="erp-panel p-6">
