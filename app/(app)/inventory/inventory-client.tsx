@@ -376,7 +376,7 @@ export default function InventoryClientPage({
             itemName: item.itemName,
             description: item.description,
             trackingType: item.trackingType,
-            inventoryType: item.inventoryType,
+            inventoryType: item.inventoryType as 'RAW' | 'WIP' | 'FG' | 'MRO',
             currentInventory: item.currentInventory,
             averageDailyUsage: item.averageDailyUsage,
             leadTimeDays: item.leadTimeDays,
