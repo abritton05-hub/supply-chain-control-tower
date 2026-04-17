@@ -31,7 +31,15 @@ function getPriorityBand(riskScore: number) {
   return 'OK';
 }
 
-export function inventoryMetrics(item: InventoryItem) {
+type InventoryMetricsInput = {
+  currentInventory: number;
+  averageDailyUsage: number;
+  leadTimeDays: number;
+  safetyStock: number;
+  criticality: 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
+};
+
+export function inventoryMetrics(item: InventoryMetricsInput) {
   const reorderPoint = item.averageDailyUsage * item.leadTimeDays + item.safetyStock;
   const reorderNeeded = item.currentInventory <= reorderPoint ? 'YES' : 'OK';
   const daysCover = item.averageDailyUsage === 0 ? 999 : item.currentInventory / item.averageDailyUsage;
