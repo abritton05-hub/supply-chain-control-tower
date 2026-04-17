@@ -10,7 +10,6 @@ export type EditableUser = AppUser & {
 
 const USERS_KEY = 'sct_users_v1';
 const CURRENT_USER_KEY = 'sct_current_user_id_v1';
-const LOGGED_IN_KEY = 'sct_logged_in_v1';
 
 const deptByRole: Record<UserRole, string> = {
   'System Admin': 'IT / Platform',
@@ -97,29 +96,6 @@ export function getCurrentUserId() {
 export function setCurrentUserId(userId: string) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(CURRENT_USER_KEY, userId);
-}
-
-export function isLoggedIn() {
-  if (typeof window === 'undefined') return false;
-  return window.localStorage.getItem(LOGGED_IN_KEY) === 'true';
-}
-
-export function loginUser(email: string, password: string) {
-  const rows = getUsers();
-  const found = rows.find(
-    (u) => u.email.toLowerCase() === email.trim().toLowerCase() && u.password === password && u.active,
-  );
-
-  if (!found) return null;
-
-  setCurrentUserId(found.id);
-  window.localStorage.setItem(LOGGED_IN_KEY, 'true');
-  return found;
-}
-
-export function logoutUser() {
-  if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(LOGGED_IN_KEY);
 }
 
 export function getCurrentUserRecord(): EditableUser {
