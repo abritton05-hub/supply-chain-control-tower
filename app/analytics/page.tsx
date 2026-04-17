@@ -29,7 +29,7 @@ export default function AnalyticsPage() {
         <section className="grid gap-4 md:grid-cols-3">
           <KpiCard label="Freight Spend Overview" value={`$${freightSpend}`} />
           <KpiCard label="Project Allocation Issues" value={projectBuilds.filter((p) => p.issuedQty < p.requiredQty).length} />
-          <KpiCard label="Open Serials in Process" value={serialRecords.filter((s) => s.status !== 'SHIPPED').length} />
+          <KpiCard label="Open Serials in Process" value={serialRecords.filter((s) => s.status !== 'Shipped').length} />
         </section>
 
         <section className="erp-card p-4 text-sm text-slate-600">

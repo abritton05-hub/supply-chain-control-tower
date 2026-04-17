@@ -372,18 +372,11 @@ export default function InventoryClientPage({
         .map((item) => ({
           ...item,
           ...inventoryMetrics({
-            itemId: item.itemId,
-            itemName: item.itemName,
-            description: item.description,
-            trackingType: item.trackingType as 'SERIALIZED' | 'LOT' | 'QUANTITY',
-            inventoryType: item.inventoryType as 'RAW' | 'WIP' | 'FG' | 'MRO',
             currentInventory: item.currentInventory,
             averageDailyUsage: item.averageDailyUsage,
             leadTimeDays: item.leadTimeDays,
             safetyStock: item.safetyStock,
             criticality: item.criticality as 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW',
-            preferredVendor: item.preferredVendor,
-            department: item.department as 'Assembly' | 'Warehouse' | 'Service' | 'Engineering',
           }),
         }))
         .filter((item) => {
