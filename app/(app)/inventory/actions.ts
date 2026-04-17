@@ -10,6 +10,8 @@ type ActionResult =
 
 export async function addInventoryItem(input: AddInventoryInput): Promise<ActionResult> {
   try {
+    const supabase = await supabaseServer();
+
     if (!input.organizationId) {
       return { ok: false, message: 'Organization is required.' };
     }
@@ -30,7 +32,7 @@ export async function addInventoryItem(input: AddInventoryInput): Promise<Action
       return { ok: false, message: 'Location is required.' };
     }
 
-    const { data: existingItem, error: existingError } = await supabaseServer
+    const { data: existingItem, error: existingError } = await supabase
       .from('items')
       .select('id')
       .eq('organization_id', input.organizationId)
@@ -45,7 +47,7 @@ export async function addInventoryItem(input: AddInventoryInput): Promise<Action
       return { ok: false, message: 'That Item ID already exists.' };
     }
 
-    const { data: insertedItem, error: itemError } = await supabaseServer
+    const { data: insertedItem, error: itemError } = await supabase
       .from('items')
       .insert({
         organization_id: input.organizationId,
@@ -70,7 +72,7 @@ export async function addInventoryItem(input: AddInventoryInput): Promise<Action
 
     const itemPk = insertedItem.id;
 
-    const { error: balanceError } = await supabaseServer
+    const { error: balanceError } = await supabase
       .from('inventory_balances')
       .insert({
         organization_id: input.organizationId,
@@ -84,7 +86,7 @@ export async function addInventoryItem(input: AddInventoryInput): Promise<Action
       return { ok: false, message: balanceError.message };
     }
 
-    const { error: txError } = await supabaseServer
+    const { error: txError } = await supabase
       .from('inventory_transactions')
       .insert({
         organization_id: input.organizationId,
@@ -102,7 +104,7 @@ export async function addInventoryItem(input: AddInventoryInput): Promise<Action
       return { ok: false, message: txError.message };
     }
 
-    const { error: auditError } = await supabaseServer
+    const { error: auditError } = await supabase
       .from('audit_logs')
       .insert({
         organization_id: input.organizationId,
