@@ -23,7 +23,11 @@ function inventoryStatus(qtyOnHand: number, reorderPoint: number) {
   return 'IN STOCK'
 }
 
-export default async function InventoryPage() {
+export default async function InventoryPage({
+  searchParams,
+}: {
+  searchParams?: { imported?: string; skipped?: string; reasons?: string; error?: string }
+}) {
   const supabase = await supabaseServer()
 
   const { data: inventory, error } = await supabase
@@ -32,6 +36,10 @@ export default async function InventoryPage() {
     .order('created_at', { ascending: false })
 
   const rows: InventoryRow[] = inventory ?? []
+  const importedCount = Number(searchParams?.imported ?? 0)
+  const skippedCount = Number(searchParams?.skipped ?? 0)
+  const reasonSummary = (searchParams?.reasons ?? "").trim()
+
   const outCount = rows.filter((item) => (item.qty_on_hand ?? 0) <= 0).length
   const lowCount = rows.filter((item) => {
     const qty = item.qty_on_hand ?? 0
@@ -45,9 +53,14 @@ export default async function InventoryPage() {
         title="Inventory Database"
         subtitle="Operational inventory visibility with live Supabase data"
         actions={
-          <Link href="/inventory/new" className="rounded border border-slate-300 bg-white px-2 py-1 text-xs">
-            Add Supply
-          </Link>
+          <div className="flex gap-2">
+            <Link href="/inventory/upload" className="rounded border border-slate-300 bg-white px-2 py-1 text-xs">
+              Upload CSV
+            </Link>
+            <Link href="/inventory/new" className="rounded border border-slate-300 bg-white px-2 py-1 text-xs">
+              Add Supply
+            </Link>
+          </div>
         }
       />
       <div className="erp-banner">
@@ -56,6 +69,14 @@ export default async function InventoryPage() {
           Real-time inventory records sourced from your Supabase inventory table.
         </p>
       </div>
+
+      {importedCount > 0 || skippedCount > 0 ? (
+        <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+          <p>CSV import complete. Inserted: {importedCount}. Skipped: {skippedCount}.</p>
+          {reasonSummary ? <p className="text-xs text-emerald-700">Skipped reasons: {reasonSummary}</p> : null}
+        </div>
+      ) : null}
+
       <div className="mb-4 grid gap-4 md:grid-cols-4">
         <KpiCard label="Total Items" value={rows.length} />
         <KpiCard label="Out of Stock" value={outCount} />
