@@ -23,6 +23,7 @@ const nav: NavGroup[] = [
   {
     title: 'Operations',
     links: [
+      { href: '/receiving', label: 'Receiving' },
       { href: '/transactions', label: 'Inventory Transactions' },
       { href: '/serial-traceability', label: 'Serial Traceability' },
       { href: '/projects-builds', label: 'Projects / Builds' },
