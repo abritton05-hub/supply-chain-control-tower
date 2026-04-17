@@ -1,17 +1,11 @@
-<<<<<<< HEAD
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { DataTable } from '@/components/data-table';
 import { serialRecords, shipmentLog, transactions } from '@/lib/data/mock-data';
-=======
-import { notFound } from 'next/navigation';
-import { serialRecords } from '@/lib/data/mock-data';
->>>>>>> origin/main
 
 export default function SerialDetailPage({ params }: { params: { serialNumber: string } }) {
   const record = serialRecords.find((row) => row.serialNumber === params.serialNumber);
   if (!record) return notFound();
-<<<<<<< HEAD
 
   const movementHistory = transactions.filter((t) => t.serialNumber === record.serialNumber || t.itemId === record.itemId);
   const shipment = shipmentLog.find((s) => s.serialNumber === record.serialNumber || s.id === record.shipmentId);
@@ -39,7 +33,4 @@ export default function SerialDetailPage({ params }: { params: { serialNumber: s
       </DataTable>
     </div>
   );
-=======
-  return <div className="erp-card p-4"><h2 className="text-lg font-semibold">{record.serialNumber}</h2><p className="text-sm text-slate-600">{record.itemId} · {record.currentLocation} · {record.status}</p></div>;
->>>>>>> origin/main
 }
