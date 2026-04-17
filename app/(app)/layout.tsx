@@ -3,19 +3,17 @@ import { isAuthenticated } from '@/lib/auth/session';
 import { Sidebar } from '@/components/sidebar';
 import { TopHeader } from '@/components/top-header';
 
-export default function ProtectedLayout({
+export default async function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const loggedIn = isAuthenticated();
+  const loggedIn = await isAuthenticated();
 
   if (!loggedIn) {
     redirect('/login');
   }
 
-  // TEMPORARY:
-  // Change this to real role logic when your auth/session exposes user roles.
   const isAdmin = true;
 
   return (
