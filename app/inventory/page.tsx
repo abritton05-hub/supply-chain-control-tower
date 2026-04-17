@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { DataTable } from '@/components/data-table'
 import { KpiCard } from '@/components/kpi-card'
 import { SectionHeader } from '@/components/section-header'
@@ -43,6 +44,11 @@ export default async function InventoryPage() {
       <SectionHeader
         title="Inventory Database"
         subtitle="Operational inventory visibility with live Supabase data"
+        actions={
+          <Link href="/inventory/new" className="rounded border border-slate-300 bg-white px-2 py-1 text-xs">
+            Add Supply
+          </Link>
+        }
       />
       <div className="erp-banner">
         <p className="text-sm font-semibold">Inventory command view</p>
