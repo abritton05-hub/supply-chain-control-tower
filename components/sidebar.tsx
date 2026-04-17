@@ -14,31 +14,22 @@ const baseNavSections = [
     title: 'Dashboards',
     links: [
       { href: '/executive-dashboard', label: 'Executive Dashboard', icon: '📊' },
-      { href: '/control-tower', label: 'Control Tower', icon: '🗼' },
-      { href: '/inventory-risk', label: 'Inventory Risk', icon: '⚠️' },
-      { href: '/freight-dashboard', label: 'Freight Dashboard', icon: '🚚' },
       { href: '/project-dashboard', label: 'Project Dashboard', icon: '📁' },
-      { href: '/traceability-dashboard', label: 'Traceability Dashboard', icon: '🔎' },
+      { href: '/shipping', label: 'Shipping Dashboard', icon: '🚚' },
     ],
   },
   {
     title: 'Operations',
     links: [
-      { href: '/transactions', label: 'Inventory Transactions', icon: '🧾' },
-      { href: '/serial-traceability', label: 'Serial Traceability', icon: '🏷️' },
-      { href: '/projects-builds', label: 'Projects / Builds', icon: '🛠️' },
-      { href: '/shipment-log', label: 'Shipment Log', icon: '📦' },
-      { href: '/freight-quotes', label: 'Freight Quotes', icon: '💲' },
-      { href: '/open-pos', label: 'Open POs', icon: '📋' },
+      { href: '/kit-tracker', label: 'Kit Tracker', icon: '🧰' },
+      { href: '/receiving', label: 'Receiving', icon: '📥' },
+      { href: '/locations', label: 'Locations', icon: '📍' },
     ],
   },
   {
-    title: 'Master Data',
+    title: 'Inventory',
     links: [
-      { href: '/inventory', label: 'Inventory', icon: '📚' },
-      { href: '/vendors', label: 'Vendors', icon: '🏢' },
-      { href: '/locations', label: 'Locations', icon: '📍' },
-      { href: '/departments', label: 'Departments', icon: '🧩' },
+      { href: '/inventory', label: 'Supplies Inventory', icon: '📦' },
     ],
   },
 ];
