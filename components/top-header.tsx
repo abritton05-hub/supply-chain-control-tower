@@ -1,5 +1,4 @@
 import { GlobalSearch } from '@/components/global-search';
-<<<<<<< HEAD
 import { currentUser } from '@/lib/data/mock-data';
 
 export function TopHeader() {
@@ -12,13 +11,6 @@ export function TopHeader() {
           {currentUser.name} · {currentUser.role} ▾
         </button>
       </div>
-=======
-
-export function TopHeader() {
-  return (
-    <header className="mb-4 flex h-14 items-center justify-end border-b border-slate-200 bg-white px-4">
-      <GlobalSearch />
->>>>>>> origin/main
     </header>
   );
 }

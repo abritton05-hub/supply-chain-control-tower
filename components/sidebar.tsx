@@ -23,10 +23,7 @@ const nav: NavGroup[] = [
   {
     title: 'Operations',
     links: [
-<<<<<<< HEAD
-=======
-      { href: '/inventory', label: 'Inventory Database' },
->>>>>>> origin/main
+      { href: '/receiving', label: 'Receiving' },
       { href: '/transactions', label: 'Inventory Transactions' },
       { href: '/serial-traceability', label: 'Serial Traceability' },
       { href: '/projects-builds', label: 'Projects / Builds' },
@@ -38,17 +35,11 @@ const nav: NavGroup[] = [
   {
     title: 'Master Data',
     links: [
-<<<<<<< HEAD
       { href: '/inventory', label: 'Inventory Database' },
       { href: '/vendors', label: 'Vendors' },
       { href: '/locations', label: 'Locations' },
       { href: '/departments', label: 'Departments' },
       { href: '/users', label: 'Users' },
-=======
-      { href: '/vendors', label: 'Vendors' },
-      { href: '/locations', label: 'Locations' },
-      { href: '/departments', label: 'Departments' },
->>>>>>> origin/main
     ],
   },
 ];

@@ -32,11 +32,7 @@ export function HeatMapWidget() {
 
   return (
     <div className="erp-card p-4">
-<<<<<<< HEAD
       <h3 className="mb-3 border-b border-slate-200 pb-2 text-base font-semibold text-slate-900">Inventory Risk Heat Map (Criticality x Days Cover)</h3>
-=======
-      <h3 className="mb-3 text-sm font-semibold">Inventory Risk Heat Map (Criticality x Days Cover)</h3>
->>>>>>> origin/main
       <div className="grid grid-cols-5 gap-2 text-xs">
         <div />
         {xBands.map((x) => <div key={x} className="text-center font-semibold text-slate-600">{x}</div>)}

@@ -1,14 +1,10 @@
 import { notFound } from 'next/navigation';
-<<<<<<< HEAD
 import { VendorDetailTabs } from '@/components/vendor-detail-tabs';
-=======
->>>>>>> origin/main
 import { vendors } from '@/lib/data/mock-data';
 
 export default function VendorDetailPage({ params }: { params: { vendorId: string } }) {
   const vendor = vendors.find((row) => row.id === params.vendorId);
   if (!vendor) return notFound();
-<<<<<<< HEAD
 
   return (
     <div className="space-y-3">
@@ -28,7 +24,4 @@ export default function VendorDetailPage({ params }: { params: { vendorId: strin
       <VendorDetailTabs vendor={vendor} />
     </div>
   );
-=======
-  return <div className="erp-card p-4"><h2 className="text-lg font-semibold">{vendor.vendorName}</h2><p className="text-sm text-slate-600">{vendor.category} · {vendor.email}</p></div>;
->>>>>>> origin/main
 }
