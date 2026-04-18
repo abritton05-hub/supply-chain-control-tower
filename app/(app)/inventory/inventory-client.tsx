@@ -1,630 +1,384 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-
-import { DataTable } from '@/components/data-table';
-import { FilterBar } from '@/components/filter-bar';
-import { KpiCard } from '@/components/kpi-card';
-import { SearchInput } from '@/components/search-input';
-import { SectionHeader } from '@/components/section-header';
-import { StatusChip } from '@/components/status-chip';
-import { inventoryMetrics } from '@/lib/logic';
-import type {
-  AddInventoryInput,
-  CriticalityLevel,
-  InventoryOverviewRow,
-  TrackingType,
-} from '@/lib/types/inventory';
-import { addInventoryItem } from './actions';
-
-type LookupOption = {
-  id: string;
-  vendor_name?: string;
-  department_name?: string;
-  location_name?: string;
-};
+import { createInventoryItem, importInventoryItems, updateInventoryItem } from './actions';
+import type { InventoryActionResult, InventoryFormInput, InventoryRecord } from './types';
 
 type Props = {
-  organizationId: string;
-  initialRows: InventoryOverviewRow[];
-  vendors: LookupOption[];
-  departments: LookupOption[];
-  locations: LookupOption[];
+  inventory: InventoryRecord[];
 };
 
-type AddForm = {
-  itemId: string;
-  itemName: string;
-  description: string;
-  trackingType: TrackingType;
-  inventoryType: string;
-  criticality: CriticalityLevel;
-  preferredVendorId: string;
-  departmentId: string;
-  averageDailyUsage: number;
-  leadTimeDays: number;
-  safetyStock: number;
-  openingQuantity: number;
-  locationId: string;
-  notes: string;
-};
-
-const buildEmptyForm = (defaults: {
-  vendorId?: string;
-  departmentId?: string;
-  locationId?: string;
-}): AddForm => ({
-  itemId: '',
-  itemName: '',
+const EMPTY_FORM: InventoryFormInput = {
+  item_id: '',
+  part_number: '',
   description: '',
-  trackingType: 'QUANTITY',
-  inventoryType: 'COMPONENT',
-  criticality: 'NORMAL',
-  preferredVendorId: defaults.vendorId ?? '',
-  departmentId: defaults.departmentId ?? '',
-  averageDailyUsage: 0,
-  leadTimeDays: 0,
-  safetyStock: 0,
-  openingQuantity: 0,
-  locationId: defaults.locationId ?? '',
-  notes: '',
-});
+  category: '',
+  location: '',
+  qty_on_hand: 0,
+  reorder_point: 0,
+};
 
-function AddInventoryModal({
-  form,
-  setForm,
-  error,
-  isPending,
-  onClose,
-  onSubmit,
-  vendors,
-  departments,
-  locations,
-}: {
-  form: AddForm;
-  setForm: React.Dispatch<React.SetStateAction<AddForm>>;
-  error: string;
-  isPending: boolean;
-  onClose: () => void;
-  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
-  vendors: LookupOption[];
-  departments: LookupOption[];
-  locations: LookupOption[];
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-      <div className="w-full max-w-5xl rounded-xl border border-slate-200 bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Add Inventory Item</h2>
-            <p className="text-sm text-slate-500">
-              Create a real inventory item and opening balance.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-          >
-            Close
-          </button>
-        </div>
-
-        <form onSubmit={onSubmit} className="space-y-6 px-6 py-5">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Item ID</label>
-              <input
-                value={form.itemId}
-                onChange={(e) => setForm((prev) => ({ ...prev, itemId: e.target.value }))}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                placeholder="INV-1001"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Item Name</label>
-              <input
-                value={form.itemName}
-                onChange={(e) => setForm((prev) => ({ ...prev, itemName: e.target.value }))}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Servo Motor"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Description</label>
-              <input
-                value={form.description}
-                onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Short description"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Tracking Type</label>
-              <select
-                value={form.trackingType}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, trackingType: e.target.value as TrackingType }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="SERIALIZED">SERIALIZED</option>
-                <option value="LOT">LOT</option>
-                <option value="QUANTITY">QUANTITY</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Inventory Type</label>
-              <input
-                value={form.inventoryType}
-                onChange={(e) => setForm((prev) => ({ ...prev, inventoryType: e.target.value }))}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                placeholder="COMPONENT"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Criticality</label>
-              <select
-                value={form.criticality}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, criticality: e.target.value as CriticalityLevel }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="CRITICAL">CRITICAL</option>
-                <option value="HIGH">HIGH</option>
-                <option value="NORMAL">NORMAL</option>
-                <option value="LOW">LOW</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Preferred Vendor</label>
-              <select
-                value={form.preferredVendorId}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, preferredVendorId: e.target.value }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">Select vendor</option>
-                {vendors.map((vendor) => (
-                  <option key={vendor.id} value={vendor.id}>
-                    {vendor.vendor_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Department</label>
-              <select
-                value={form.departmentId}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, departmentId: e.target.value }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">Select department</option>
-                {departments.map((department) => (
-                  <option key={department.id} value={department.id}>
-                    {department.department_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Location</label>
-              <select
-                value={form.locationId}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, locationId: e.target.value }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">Select location</option>
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.location_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Opening Quantity</label>
-              <input
-                type="number"
-                value={form.openingQuantity}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, openingQuantity: Number(e.target.value) }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Average Daily Usage</label>
-              <input
-                type="number"
-                value={form.averageDailyUsage}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, averageDailyUsage: Number(e.target.value) }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Lead Time Days</label>
-              <input
-                type="number"
-                value={form.leadTimeDays}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, leadTimeDays: Number(e.target.value) }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Safety Stock</label>
-              <input
-                type="number"
-                value={form.safetyStock}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, safetyStock: Number(e.target.value) }))
-                }
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="md:col-span-2 xl:col-span-3">
-              <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>
-              <textarea
-                value={form.notes}
-                onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-                className="min-h-[96px] w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Opening balance note"
-              />
-            </div>
-          </div>
-
-          {error ? (
-            <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
-
-          <div className="flex items-center justify-end gap-3 border-t border-slate-200 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isPending}
-              className="rounded border border-cyan-700 bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-60"
-            >
-              {isPending ? 'Saving...' : 'Save Inventory Item'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+function statusTone(status: string) {
+  if (status === 'OUT') return 'bg-rose-50 text-rose-700 border-rose-200';
+  if (status === 'LOW STOCK') return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
 }
 
-export default function InventoryClientPage({
-  organizationId,
-  initialRows,
-  vendors,
-  departments,
-  locations,
-}: Props) {
-  const router = useRouter();
-  const [query, setQuery] = useState('');
-  const [critical, setCritical] = useState('ALL');
-  const [reorder, setReorder] = useState('ALL');
-  const [tracking, setTracking] = useState('ALL');
-  const [department, setDepartment] = useState('ALL');
+function getStatus(qtyOnHand: number, reorderPoint: number) {
+  if (qtyOnHand <= 0) return 'OUT';
+  if (qtyOnHand <= reorderPoint) return 'LOW STOCK';
+  return 'IN STOCK';
+}
 
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [addError, setAddError] = useState('');
+function toForm(item: InventoryRecord): InventoryFormInput {
+  return {
+    id: item.id,
+    item_id: item.item_id,
+    part_number: item.part_number ?? '',
+    description: item.description,
+    category: item.category ?? '',
+    location: item.location ?? '',
+    qty_on_hand: item.qty_on_hand ?? 0,
+    reorder_point: item.reorder_point ?? 0,
+  };
+}
+
+function parseCsvLine(line: string) {
+  const cells: string[] = [];
+  let current = '';
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function normalizeHeader(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+function parseNumber(value: string) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function parseInventoryCsv(text: string): InventoryFormInput[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) return [];
+
+  const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+
+  return lines.slice(1).map((line) => {
+    const cells = parseCsvLine(line);
+    const row = headers.reduce<Record<string, string>>((acc, header, index) => {
+      acc[header] = cells[index] ?? '';
+      return acc;
+    }, {});
+
+    return {
+      item_id: row.item_id || '',
+      part_number: row.part_number || '',
+      description: row.description || '',
+      category: row.category || '',
+      location: row.location || '',
+      qty_on_hand: parseNumber(row.qty_on_hand || ''),
+      reorder_point: parseNumber(row.reorder_point || ''),
+    };
+  });
+}
+
+export function InventoryClient({ inventory }: Props) {
+  const router = useRouter();
+  const [mode, setMode] = useState<'add' | 'edit' | 'upload'>('add');
+  const [form, setForm] = useState<InventoryFormInput>(EMPTY_FORM);
+  const [message, setMessage] = useState<InventoryActionResult | null>(null);
+  const [query, setQuery] = useState('');
   const [isPending, startTransition] = useTransition();
 
-  const [form, setForm] = useState(
-    buildEmptyForm({
-      vendorId: vendors[0]?.id,
-      departmentId: departments[0]?.id,
-      locationId: locations[0]?.id,
-    })
-  );
+  const filteredInventory = useMemo(() => {
+    const value = query.trim().toLowerCase();
+    if (!value) return inventory;
 
-  const rows = useMemo(
-    () =>
-      initialRows
-        .map((item) => ({
-          ...item,
-          currentInventory: Number(item.current_inventory),
-          averageDailyUsage: Number(item.average_daily_usage),
-          leadTimeDays: Number(item.lead_time_days),
-          safetyStock: Number(item.safety_stock),
-          trackingType: item.tracking_type as 'SERIALIZED' | 'LOT' | 'QUANTITY',
-          inventoryType: item.inventory_type as 'RAW' | 'WIP' | 'FG' | 'MRO',
-          criticality: item.criticality as 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW',
-          preferredVendor: item.preferred_vendor,
-          department: item.department as 'Assembly' | 'Warehouse' | 'Service' | 'Engineering',
-          itemId: item.item_id,
-          itemName: item.item_name,
-        }))
-        .map((item) => ({
-          ...item,
-          ...inventoryMetrics({
-            currentInventory: item.currentInventory,
-            averageDailyUsage: item.averageDailyUsage,
-            leadTimeDays: item.leadTimeDays,
-            safetyStock: item.safetyStock,
-            criticality: item.criticality as 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW',
-          }),
-        }))
-        .filter((item) => {
-          const searchPass = `${item.itemId} ${item.itemName} ${item.description}`
-            .toLowerCase()
-            .includes(query.toLowerCase());
-          const criticalPass = critical === 'ALL' || item.criticality === critical;
-          const reorderPass = reorder === 'ALL' || item.reorderNeeded === reorder;
-          const trackingPass = tracking === 'ALL' || item.trackingType === tracking;
-          const departmentPass = department === 'ALL' || item.department === department;
-          return searchPass && criticalPass && reorderPass && trackingPass && departmentPass;
-        }),
-    [critical, department, initialRows, query, reorder, tracking]
-  );
-
-  const reorderCount = rows.filter((r) => r.reorderNeeded === 'YES').length;
-
-  function openAddModal() {
-    setAddError('');
-    setForm(
-      buildEmptyForm({
-        vendorId: vendors[0]?.id,
-        departmentId: departments[0]?.id,
-        locationId: locations[0]?.id,
-      })
+    return inventory.filter((item) =>
+      `${item.item_id} ${item.part_number ?? ''} ${item.description} ${item.category ?? ''} ${
+        item.location ?? ''
+      }`
+        .toLowerCase()
+        .includes(value)
     );
-    setIsAddOpen(true);
+  }, [inventory, query]);
+
+  function updateField<K extends keyof InventoryFormInput>(key: K, value: InventoryFormInput[K]) {
+    setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function closeAddModal() {
-    setIsAddOpen(false);
-    setAddError('');
+  function startAdd() {
+    setMode('add');
+    setForm(EMPTY_FORM);
+    setMessage(null);
   }
 
-  function handleAddInventory(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setAddError('');
+  function startEdit(item: InventoryRecord) {
+    setMode('edit');
+    setForm(toForm(item));
+    setMessage(null);
+  }
 
-    const payload: AddInventoryInput = {
-      organizationId,
-      itemId: form.itemId,
-      itemName: form.itemName,
-      description: form.description,
-      trackingType: form.trackingType,
-      inventoryType: form.inventoryType,
-      criticality: form.criticality,
-      preferredVendorId: form.preferredVendorId || null,
-      departmentId: form.departmentId || null,
-      averageDailyUsage: Number(form.averageDailyUsage) || 0,
-      leadTimeDays: Number(form.leadTimeDays) || 0,
-      safetyStock: Number(form.safetyStock) || 0,
-      openingQuantity: Number(form.openingQuantity) || 0,
-      locationId: form.locationId,
-      notes: form.notes,
-      performedByUserId: null,
-    };
+  function submitForm() {
+    setMessage(null);
 
     startTransition(async () => {
-      const result = await addInventoryItem(payload);
+      const result = mode === 'edit' ? await updateInventoryItem(form) : await createInventoryItem(form);
+      setMessage(result);
 
-      if (!result.ok) {
-        setAddError(result.message);
-        return;
+      if (result.ok) {
+        setMode('add');
+        setForm(EMPTY_FORM);
+        router.refresh();
       }
-
-      closeAddModal();
-      router.refresh();
     });
   }
 
-  function vendorHref(vendorName: string) {
-    const match = vendors.find((vendor) => vendor.vendor_name === vendorName);
-    return match ? `/vendors/${match.id}` : '#';
+  async function handleUpload(file: File | undefined) {
+    if (!file) return;
+
+    setMode('upload');
+    setMessage(null);
+    const text = await file.text();
+    const rows = parseInventoryCsv(text);
+
+    startTransition(async () => {
+      const result = await importInventoryItems(rows);
+      setMessage(result);
+
+      if (result.ok) {
+        router.refresh();
+      }
+    });
   }
 
   return (
-    <div>
-      {isAddOpen ? (
-        <AddInventoryModal
-          form={form}
-          setForm={setForm}
-          error={addError}
-          isPending={isPending}
-          onClose={closeAddModal}
-          onSubmit={handleAddInventory}
-          vendors={vendors}
-          departments={departments}
-          locations={locations}
-        />
-      ) : null}
+    <div className="space-y-4">
+      <div className="erp-panel p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">
+              {mode === 'edit' ? 'Edit Inventory Item' : mode === 'upload' ? 'Upload Inventory' : 'Add Inventory Item'}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              CSV headers accepted: item_id, part_number, description, category, location,
+              qty_on_hand, reorder_point.
+            </p>
+          </div>
 
-      <SectionHeader
-        title="Inventory Database"
-        subtitle="Operational inventory visibility with reorder and risk logic"
-        actions={
-          <button
-            type="button"
-            onClick={openAddModal}
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs hover:bg-slate-50"
-          >
-            Add Inventory
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={startAdd} className="erp-button">
+              Add Item
+            </button>
+            <label className="erp-button cursor-pointer">
+              Upload CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(event) => handleUpload(event.target.files?.[0])}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Item ID</label>
+            <input
+              value={form.item_id}
+              onChange={(event) => updateField('item_id', event.target.value)}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              placeholder="INV-1001"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Part Number</label>
+            <input
+              value={form.part_number}
+              onChange={(event) => updateField('part_number', event.target.value)}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              placeholder="131950-390"
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700">Description</label>
+            <input
+              value={form.description}
+              onChange={(event) => updateField('description', event.target.value)}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Harness assembly"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Category</label>
+            <input
+              value={form.category}
+              onChange={(event) => updateField('category', event.target.value)}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Harness"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Location</label>
+            <input
+              value={form.location}
+              onChange={(event) => updateField('location', event.target.value)}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              placeholder="SEA991"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Qty On Hand</label>
+            <input
+              type="number"
+              min={0}
+              value={form.qty_on_hand}
+              onChange={(event) => updateField('qty_on_hand', Number(event.target.value))}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Reorder Point</label>
+            <input
+              type="number"
+              min={0}
+              value={form.reorder_point}
+              onChange={(event) => updateField('reorder_point', Number(event.target.value))}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          {message ? (
+            <p className={`text-sm font-medium ${message.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+              {message.message}
+            </p>
+          ) : (
+            <p className="text-sm text-slate-500">
+              Required fields: item ID, part number, description, category, location, quantities.
+            </p>
+          )}
+
+          <button type="button" onClick={submitForm} disabled={isPending} className="erp-button">
+            {isPending ? 'Saving...' : mode === 'edit' ? 'Save Changes' : 'Add Item'}
           </button>
-        }
-      />
-
-      <div className="erp-banner">
-        <p className="text-sm font-semibold">Inventory command view</p>
-        <p className="text-xs text-slate-200">
-          Computed planning fields are live from current usage, lead time, and safety stock assumptions.
-        </p>
+        </div>
       </div>
 
-      <div className="mb-4 grid gap-4 md:grid-cols-4">
-        <KpiCard label="Filtered Items" value={rows.length} />
-        <KpiCard label="Need Reorder" value={reorderCount} />
-        <KpiCard label="Critical Filter" value={critical} />
-        <KpiCard label="Department Filter" value={department} />
-      </div>
-
-      <FilterBar>
-        <SearchInput
+      <div className="erp-panel p-4">
+        <label className="mb-1 block text-sm font-medium text-slate-700">Search Inventory</label>
+        <input
           value={query}
-          onChange={setQuery}
-          placeholder="Search Item ID, Name, Description"
+          onChange={(event) => setQuery(event.target.value)}
+          className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          placeholder="Search item ID, part number, description, category, or location"
         />
+      </div>
 
-        <select
-          className="rounded border border-slate-300 px-2 text-sm"
-          value={critical}
-          onChange={(e) => setCritical(e.target.value)}
-        >
-          <option value="ALL">Critical: All</option>
-          <option>CRITICAL</option>
-          <option>HIGH</option>
-          <option>NORMAL</option>
-          <option>LOW</option>
-        </select>
+      <div className="erp-panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Item ID</th>
+                <th className="px-4 py-3">Part Number</th>
+                <th className="px-4 py-3">Description</th>
+                <th className="px-4 py-3">Category</th>
+                <th className="px-4 py-3">Location</th>
+                <th className="px-4 py-3">Qty On Hand</th>
+                <th className="px-4 py-3">Reorder Point</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
 
-        <select
-          className="rounded border border-slate-300 px-2 text-sm"
-          value={reorder}
-          onChange={(e) => setReorder(e.target.value)}
-        >
-          <option value="ALL">Reorder: All</option>
-          <option>YES</option>
-          <option>OK</option>
-        </select>
+            <tbody>
+              {filteredInventory.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    No inventory records found in Supabase.
+                  </td>
+                </tr>
+              ) : (
+                filteredInventory.map((item) => {
+                  const qtyOnHand = item.qty_on_hand ?? 0;
+                  const reorderPoint = item.reorder_point ?? 0;
+                  const status = getStatus(qtyOnHand, reorderPoint);
 
-        <select
-          className="rounded border border-slate-300 px-2 text-sm"
-          value={tracking}
-          onChange={(e) => setTracking(e.target.value)}
-        >
-          <option value="ALL">Tracking: All</option>
-          <option>SERIALIZED</option>
-          <option>LOT</option>
-          <option>QUANTITY</option>
-        </select>
-
-        <select
-          className="rounded border border-slate-300 px-2 text-sm"
-          value={department}
-          onChange={(e) => setDepartment(e.target.value)}
-        >
-          <option value="ALL">Department: All</option>
-          {[...new Set(rows.map((row) => row.department).filter(Boolean))].map((dep) => (
-            <option key={dep} value={dep}>
-              {dep}
-            </option>
-          ))}
-        </select>
-      </FilterBar>
-
-      <DataTable>
-        <thead>
-          <tr>
-            {[
-              'Item ID',
-              'Item Name',
-              'Description',
-              'Tracking Type',
-              'Inventory Type',
-              'Current Inventory',
-              'Average Daily Usage',
-              'Lead Time Days',
-              'Safety Stock',
-              'Qty Above Safety',
-              'Reorder Point',
-              'Reorder Needed',
-              'Days Cover',
-              'Projected Stockout Date',
-              'Next Suggested Order Date',
-              'Suggested Order Qty',
-              'Priority',
-              'Risk Score',
-              'Critical',
-              'Preferred Vendor',
-              'Department',
-            ].map((h) => (
-              <th key={h}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-
-        <tbody>
-          {rows.map((item) => (
-            <tr key={item.itemId} className={item.reorderNeeded === 'YES' ? 'bg-rose-50' : ''}>
-              <td className="font-semibold">
-                <Link href={`/inventory/${item.itemId}`} className="text-cyan-700 hover:underline">
-                  {item.itemId}
-                </Link>
-              </td>
-              <td>{item.itemName}</td>
-              <td>{item.description}</td>
-              <td>{item.trackingType}</td>
-              <td>{item.inventoryType}</td>
-              <td>{item.currentInventory}</td>
-              <td>{item.averageDailyUsage}</td>
-              <td>{item.leadTimeDays}</td>
-              <td>{item.safetyStock}</td>
-              <td className={item.quantityAboveSafetyStock <= 0 ? 'font-semibold text-rose-700' : ''}>
-                {item.quantityAboveSafetyStock}
-              </td>
-              <td>{item.reorderPoint}</td>
-              <td>
-                <StatusChip value={item.reorderNeeded} />
-              </td>
-              <td>{item.daysCover.toFixed(1)}</td>
-              <td>{item.projectedStockoutDate}</td>
-              <td>{item.nextSuggestedOrderDate}</td>
-              <td>{item.suggestedOrderQty}</td>
-              <td>
-                <StatusChip value={item.priority} />
-              </td>
-              <td>{item.riskScore}</td>
-              <td>
-                <StatusChip value={item.criticality} />
-              </td>
-              <td>
-                <Link href={vendorHref(item.preferredVendor)} className="text-cyan-700 hover:underline">
-                  {item.preferredVendor}
-                </Link>
-              </td>
-              <td>{item.department}</td>
-            </tr>
-          ))}
-        </tbody>
-      </DataTable>
+                  return (
+                    <tr key={item.id} className="border-b border-slate-100 align-top">
+                      <td className="px-4 py-3 font-medium text-slate-900">
+                        <Link href={`/inventory/${item.item_id}`} className="text-cyan-700 hover:underline">
+                          {item.item_id}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{item.part_number || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{item.description}</td>
+                      <td className="px-4 py-3 text-slate-700">{item.category || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{item.location || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{qtyOnHand}</td>
+                      <td className="px-4 py-3 text-slate-700">{reorderPoint}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${statusTone(
+                            status
+                          )}`}
+                        >
+                          {status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(item)}
+                          className="font-semibold text-cyan-700 hover:underline"
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

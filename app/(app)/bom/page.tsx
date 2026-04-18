@@ -6,8 +6,8 @@ import { supabaseRest } from '@/lib/supabase/rest';
 type BomHeader = {
   id: string;
   bom_number: string | null;
-  date: string | null;
-  project_job: string | null;
+  bom_date: string | null;
+  project_job_number: string | null;
   requested_by: string | null;
 };
 
@@ -19,8 +19,8 @@ function formatDate(value: string | null) {
 export default async function BomListPage() {
   const boms = await supabaseRest<BomHeader[]>('boms', {
     params: {
-      select: 'id,bom_number,date,project_job,requested_by',
-      order: 'date.desc.nullslast',
+      select: 'id,bom_number,bom_date,project_job_number,requested_by',
+      order: 'bom_date.desc.nullslast',
       limit: 200,
     },
   });
@@ -69,8 +69,8 @@ export default async function BomListPage() {
                     {bom.bom_number || '(Auto-numbered)'}
                   </Link>
                 </td>
-                <td>{formatDate(bom.date)}</td>
-                <td>{bom.project_job || '-'}</td>
+                <td>{formatDate(bom.bom_date)}</td>
+                <td>{bom.project_job_number || '-'}</td>
                 <td>{bom.requested_by || '-'}</td>
               </tr>
             ))}

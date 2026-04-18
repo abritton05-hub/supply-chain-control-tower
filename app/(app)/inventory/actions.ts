@@ -2,133 +2,166 @@
 
 import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase/server';
-import type { AddInventoryInput } from '@/lib/types/inventory';
+import type { InventoryActionResult, InventoryFormInput } from './types';
 
-type ActionResult =
-  | { ok: true; itemPk: string }
-  | { ok: false; message: string };
+function clean(value: string | null | undefined) {
+  return value?.trim() ?? '';
+}
 
-export async function addInventoryItem(input: AddInventoryInput): Promise<ActionResult> {
+function normalizeQuantity(value: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function validateInventory(input: InventoryFormInput): InventoryActionResult {
+  if (!clean(input.item_id)) {
+    return { ok: false, message: 'Item ID is required.' };
+  }
+
+  if (!clean(input.part_number)) {
+    return { ok: false, message: 'Part number is required.' };
+  }
+
+  if (!clean(input.description)) {
+    return { ok: false, message: 'Description is required.' };
+  }
+
+  if (!clean(input.category)) {
+    return { ok: false, message: 'Category is required.' };
+  }
+
+  if (!clean(input.location)) {
+    return { ok: false, message: 'Location is required.' };
+  }
+
+  if (normalizeQuantity(input.qty_on_hand) < 0) {
+    return { ok: false, message: 'Qty on hand cannot be negative.' };
+  }
+
+  if (normalizeQuantity(input.reorder_point) < 0) {
+    return { ok: false, message: 'Reorder point cannot be negative.' };
+  }
+
+  return { ok: true, message: 'Valid inventory item.' };
+}
+
+function toPayload(input: InventoryFormInput) {
+  return {
+    item_id: clean(input.item_id),
+    part_number: clean(input.part_number),
+    description: clean(input.description),
+    category: clean(input.category),
+    location: clean(input.location),
+    qty_on_hand: normalizeQuantity(input.qty_on_hand),
+    reorder_point: normalizeQuantity(input.reorder_point),
+  };
+}
+
+export async function createInventoryItem(
+  input: InventoryFormInput
+): Promise<InventoryActionResult> {
   try {
+    const validation = validateInventory(input);
+    if (!validation.ok) return validation;
+
     const supabase = await supabaseServer();
 
-    if (!input.organizationId) {
-      return { ok: false, message: 'Organization is required.' };
-    }
-
-    if (!input.itemId.trim()) {
-      return { ok: false, message: 'Item ID is required.' };
-    }
-
-    if (!input.itemName.trim()) {
-      return { ok: false, message: 'Item Name is required.' };
-    }
-
-    if (!input.description.trim()) {
-      return { ok: false, message: 'Description is required.' };
-    }
-
-    if (!input.locationId) {
-      return { ok: false, message: 'Location is required.' };
-    }
-
-    const { data: existingItem, error: existingError } = await supabase
-      .from('items')
+    const { data: existing, error: existingError } = await supabase
+      .from('inventory')
       .select('id')
-      .eq('organization_id', input.organizationId)
-      .eq('item_id', input.itemId.trim())
+      .eq('item_id', clean(input.item_id))
       .maybeSingle();
 
     if (existingError) {
       return { ok: false, message: existingError.message };
     }
 
-    if (existingItem) {
+    if (existing) {
       return { ok: false, message: 'That Item ID already exists.' };
     }
 
-    const { data: insertedItem, error: itemError } = await supabase
-      .from('items')
-      .insert({
-        organization_id: input.organizationId,
-        item_id: input.itemId.trim(),
-        item_name: input.itemName.trim(),
-        description: input.description.trim(),
-        tracking_type: input.trackingType,
-        inventory_type: input.inventoryType.trim() || 'COMPONENT',
-        criticality: input.criticality,
-        preferred_vendor_id: input.preferredVendorId,
-        department_id: input.departmentId,
-        average_daily_usage: input.averageDailyUsage,
-        lead_time_days: input.leadTimeDays,
-        safety_stock: input.safetyStock,
-      })
-      .select('id, item_id')
-      .single();
+    const { error } = await supabase.from('inventory').insert(toPayload(input));
 
-    if (itemError || !insertedItem) {
-      return { ok: false, message: itemError?.message || 'Failed to create item.' };
-    }
-
-    const itemPk = insertedItem.id;
-
-    const { error: balanceError } = await supabase
-      .from('inventory_balances')
-      .insert({
-        organization_id: input.organizationId,
-        item_pk: itemPk,
-        location_id: input.locationId,
-        quantity_on_hand: input.openingQuantity,
-        quantity_allocated: 0,
-      });
-
-    if (balanceError) {
-      return { ok: false, message: balanceError.message };
-    }
-
-    const { error: txError } = await supabase
-      .from('inventory_transactions')
-      .insert({
-        organization_id: input.organizationId,
-        item_pk: itemPk,
-        location_id: input.locationId,
-        transaction_type: 'RECEIPT',
-        quantity: input.openingQuantity,
-        reference_type: 'OPENING_BALANCE',
-        reference_id: insertedItem.item_id,
-        notes: input.notes?.trim() || 'Opening inventory balance created with new item.',
-        performed_by_user_id: input.performedByUserId ?? null,
-      });
-
-    if (txError) {
-      return { ok: false, message: txError.message };
-    }
-
-    const { error: auditError } = await supabase
-      .from('audit_logs')
-      .insert({
-        organization_id: input.organizationId,
-        entity_type: 'ITEM',
-        entity_id: itemPk,
-        action: 'CREATE',
-        old_values_json: null,
-        new_values_json: {
-          item_id: input.itemId.trim(),
-          item_name: input.itemName.trim(),
-          opening_quantity: input.openingQuantity,
-          location_id: input.locationId,
-        },
-        performed_by_user_id: input.performedByUserId ?? null,
-      });
-
-    if (auditError) {
-      return { ok: false, message: auditError.message };
+    if (error) {
+      return { ok: false, message: error.message };
     }
 
     revalidatePath('/inventory');
-    return { ok: true, itemPk };
+    return { ok: true, message: 'Inventory item added.' };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return { ok: false, message };
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Failed to add inventory item.',
+    };
+  }
+}
+
+export async function updateInventoryItem(
+  input: InventoryFormInput
+): Promise<InventoryActionResult> {
+  try {
+    if (!input.id) {
+      return { ok: false, message: 'Inventory record ID is required for edits.' };
+    }
+
+    const validation = validateInventory(input);
+    if (!validation.ok) return validation;
+
+    const supabase = await supabaseServer();
+    const { error } = await supabase
+      .from('inventory')
+      .update(toPayload(input))
+      .eq('id', input.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath('/inventory');
+    revalidatePath(`/inventory/${clean(input.item_id)}`);
+    return { ok: true, message: 'Inventory item updated.' };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Failed to update inventory item.',
+    };
+  }
+}
+
+export async function importInventoryItems(
+  inputs: InventoryFormInput[]
+): Promise<InventoryActionResult> {
+  try {
+    if (inputs.length === 0) {
+      return { ok: false, message: 'No inventory rows were found in the upload.' };
+    }
+
+    if (inputs.length > 500) {
+      return { ok: false, message: 'Import is limited to 500 rows at a time.' };
+    }
+
+    for (const [index, input] of inputs.entries()) {
+      const validation = validateInventory(input);
+      if (!validation.ok) {
+        return { ok: false, message: `Row ${index + 2}: ${validation.message}` };
+      }
+    }
+
+    const supabase = await supabaseServer();
+    const { error } = await supabase
+      .from('inventory')
+      .upsert(inputs.map(toPayload), { onConflict: 'item_id' });
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath('/inventory');
+    return { ok: true, message: `${inputs.length} inventory row(s) imported.` };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Failed to import inventory items.',
+    };
   }
 }

@@ -1,42 +1,106 @@
-'use client';
-
-import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { DataTable } from '@/components/data-table';
-import { FilterBar } from '@/components/filter-bar';
 import { KpiCard } from '@/components/kpi-card';
-import { SearchInput } from '@/components/search-input';
 import { SectionHeader } from '@/components/section-header';
 import { StatusChip } from '@/components/status-chip';
-import { transactions } from '@/lib/data/mock-data';
+import { supabaseServer } from '@/lib/supabase/server';
+import type { InventoryTransaction } from '../receiving/types';
 
-export default function TransactionsPage() {
-  const [query, setQuery] = useState('');
-  const [type, setType] = useState('ALL');
+function formatDate(value: string | null) {
+  if (!value) return '-';
+  return new Date(`${value}T00:00:00`).toLocaleDateString();
+}
 
-  const rows = useMemo(
-    () => transactions.filter((t) => `${t.itemId} ${t.serialNumber} ${t.reference} ${t.performedByName}`.toLowerCase().includes(query.toLowerCase()) && (type === 'ALL' || t.movementType === type)),
-    [query, type],
-  );
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString();
+}
+
+export default async function TransactionsPage() {
+  const supabase = await supabaseServer();
+
+  const { data, error } = await supabase
+    .from('inventory_transactions')
+    .select(
+      'id,transaction_date,item_id,part_number,description,transaction_type,quantity,from_location,to_location,reference,notes,performed_by,created_at'
+    )
+    .order('created_at', { ascending: false })
+    .limit(500);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as InventoryTransaction[];
+  const receipts = rows.filter((row) => row.transaction_type === 'RECEIPT').length;
+  const issues = rows.filter((row) => row.transaction_type === 'ISSUE').length;
 
   return (
     <div className="space-y-4">
-      <SectionHeader title="Inventory Transactions" subtitle="User-attributed movement history and immutable audit trail" />
+      <SectionHeader
+        title="Transactions"
+        subtitle="Inventory movement history written by receiving and future stock workflows"
+      />
+
       <div className="grid gap-4 md:grid-cols-3">
         <KpiCard label="Visible Transactions" value={rows.length} />
-        <KpiCard label="Receipts" value={rows.filter((r) => r.movementType === 'RECEIPT').length} />
-        <KpiCard label="Issues" value={rows.filter((r) => r.movementType === 'ISSUE').length} />
+        <KpiCard label="Receipts" value={receipts} />
+        <KpiCard label="Issues" value={issues} />
       </div>
-      <FilterBar>
-        <SearchInput value={query} onChange={setQuery} placeholder="Search item, serial, reference, user" />
-        <select className="rounded border border-slate-300 px-2 text-sm" value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="ALL">Type: All</option><option>RECEIPT</option><option>ISSUE</option><option>TRANSFER</option><option>ADJUSTMENT</option><option>CYCLE COUNT</option><option>BUILD ISSUE</option><option>BUILD COMPLETE</option><option>SHIP</option><option>RETURN</option><option>SCRAP</option><option>LOCATION MOVE</option>
-        </select>
-      </FilterBar>
-      <DataTable>
-        <thead><tr>{['Date','Item ID','Serial Number','Movement Type','Quantity','From Location','To Location','Reference','Work Order','Performed By','Role','Performed At','Notes'].map((h)=><th key={h}>{h}</th>)}</tr></thead>
-        <tbody>{rows.map((r)=><tr key={r.id}><td>{r.date}</td><td><Link href={`/inventory/${r.itemId}`} className="text-cyan-700 hover:underline">{r.itemId}</Link></td><td>{r.serialNumber !== '-' ? <Link href={`/serial-traceability/${r.serialNumber}`} className="text-cyan-700 hover:underline">{r.serialNumber}</Link> : '-'}</td><td><StatusChip value={r.movementType} /></td><td>{r.quantity}</td><td>{r.fromLocation}</td><td>{r.toLocation}</td><td>{r.reference.startsWith('PO-') ? <Link href={`/open-pos/${r.reference}`} className="text-cyan-700 hover:underline">{r.reference}</Link> : r.reference}</td><td>{r.workOrder}</td><td>{r.performedByName}</td><td>{r.performedByRole}</td><td>{r.performedAt}</td><td>{r.notes}</td></tr>)}</tbody>
-      </DataTable>
+
+      <div className="erp-panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Item ID</th>
+                <th className="px-4 py-3">Part Number</th>
+                <th className="px-4 py-3">Type</th>
+                <th className="px-4 py-3">Quantity</th>
+                <th className="px-4 py-3">From</th>
+                <th className="px-4 py-3">To</th>
+                <th className="px-4 py-3">Reference</th>
+                <th className="px-4 py-3">Performed By</th>
+                <th className="px-4 py-3">Performed At</th>
+                <th className="px-4 py-3">Notes</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
+                    No inventory transactions found.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((row) => (
+                  <tr key={row.id} className="border-b border-slate-100 align-top">
+                    <td className="px-4 py-3 text-slate-700">
+                      {formatDate(row.transaction_date)}
+                    </td>
+                    <td className="px-4 py-3 font-medium">
+                      <Link href={`/inventory/${row.item_id}`} className="text-cyan-700 hover:underline">
+                        {row.item_id}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">{row.part_number || '-'}</td>
+                    <td className="px-4 py-3">
+                      <StatusChip value={row.transaction_type} />
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">{row.quantity}</td>
+                    <td className="px-4 py-3 text-slate-700">{row.from_location || '-'}</td>
+                    <td className="px-4 py-3 text-slate-700">{row.to_location || '-'}</td>
+                    <td className="px-4 py-3 text-slate-700">{row.reference || '-'}</td>
+                    <td className="px-4 py-3 text-slate-700">{row.performed_by || '-'}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDateTime(row.created_at)}</td>
+                    <td className="px-4 py-3 text-slate-700">{row.notes || '-'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

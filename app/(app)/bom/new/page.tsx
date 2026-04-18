@@ -5,8 +5,8 @@ import { getNextBomNumber, supabaseRest } from '@/lib/supabase/rest';
 
 type BomInsert = {
   bom_number: string;
-  date: string;
-  project_job: string;
+  bom_date: string;
+  project_job_number: string;
   ship_from: string;
   ship_to: string;
   po_number: string;
@@ -69,8 +69,8 @@ export default async function NewBomPage() {
 
     const bomPayload: BomInsert = {
       bom_number: bomNumber,
-      date: asString(formData.get('date')),
-      project_job: asString(formData.get('project_job')),
+      bom_date: asString(formData.get('date')),
+      project_job_number: asString(formData.get('project_job')),
       ship_from: asString(formData.get('ship_from')),
       ship_to: asString(formData.get('ship_to')),
       po_number: asString(formData.get('po_number')),

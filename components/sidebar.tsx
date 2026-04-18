@@ -15,42 +15,31 @@ const baseNavSections = [
     links: [
       { href: '/executive-dashboard', label: 'Executive Dashboard', icon: '📊' },
       { href: '/project-dashboard', label: 'Project Dashboard', icon: '📁' },
-      { href: '/shipping', label: 'Shipping Dashboard', icon: '🚚' },
     ],
   },
   {
-    title: 'Operations',
+    title: 'Core Operations',
     links: [
-      { href: '/inventory', label: 'Inventory Database', icon: '📦' },
-      { href: '/transactions', label: 'Inventory Transactions', icon: '📊' },
-      { href: '/serial-traceability', label: 'Serial Traceability', icon: '🔍' },
-      { href: '/projects-builds', label: 'Projects / Builds', icon: '🏗️' },
-      { href: '/shipment-log', label: 'Shipment Log', icon: '📋' },
-      { href: '/freight-quotes', label: 'Freight Quotes', icon: '🚛' },
-      { href: '/open-pos', label: 'Open POs', icon: '📑' },
-      { href: '/receiving', label: 'Receiving', icon: '📥' },
-      { href: '/locations', label: 'Locations', icon: '📍' },
+      { href: '/inventory', label: 'Inventory', icon: '📦' },
       { href: '/kit-tracker', label: 'Kit Tracker', icon: '🧰' },
+      { href: '/receiving', label: 'Receiving', icon: '📥' },
       { href: '/bom', label: 'Bill of Materials', icon: '📄' },
+      { href: '/transactions', label: 'Transactions', icon: '📊' },
     ],
   },
   {
-    title: 'Inventory',
-    links: [
-      { href: '/vendors', label: 'Vendors', icon: '🏢' },
-      { href: '/locations', label: 'Locations', icon: '📍' },
-      { href: '/departments', label: 'Departments', icon: '🏬' },
-      { href: '/users', label: 'Users', icon: '👤' },
-    ],
+    title: 'Delivery',
+    links: [{ href: '/driver-manifest', label: 'Driver Manifest', icon: '🚚' }],
+  },
+  {
+    title: 'Master Data',
+    links: [{ href: '/locations', label: 'Locations', icon: '📍' }],
   },
 ];
 
 const adminSection = {
   title: 'Admin',
-  links: [
-    { href: '/users', label: 'Users', icon: '👤' },
-    { href: '/rootstock', label: 'Rootstock Master', icon: '🧠' },
-  ],
+  links: [{ href: '/users', label: 'Users / Access', icon: '👤' }],
 };
 
 export function Sidebar({ isAdmin = false }: SidebarProps) {

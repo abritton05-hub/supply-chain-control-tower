@@ -6,8 +6,8 @@ import { supabaseRest } from '@/lib/supabase/rest';
 type BomHeader = {
   id: string;
   bom_number: string | null;
-  date: string | null;
-  project_job: string | null;
+  bom_date: string | null;
+  project_job_number: string | null;
   ship_from: string | null;
   ship_to: string | null;
   po_number: string | null;
@@ -36,7 +36,7 @@ function displayDate(value: string | null) {
 export default async function BomDetailPage({ params }: { params: { bomId: string } }) {
   const [bom] = await supabaseRest<BomHeader[]>('boms', {
     params: {
-      select: 'id,bom_number,date,project_job,ship_from,ship_to,po_number,reference_number,requested_by,notes,authorized_by,authorized_date',
+      select: 'id,bom_number,bom_date,project_job_number,ship_from,ship_to,po_number,reference_number,requested_by,notes,authorized_by,authorized_date',
       id: `eq.${params.bomId}`,
       limit: 1,
     },
@@ -91,11 +91,11 @@ export default async function BomDetailPage({ params }: { params: { bomId: strin
           </div>
           <div>
             <p className="font-semibold uppercase tracking-wide text-slate-500">Date</p>
-            <p className="text-sm font-semibold text-slate-900">{displayDate(bom.date)}</p>
+            <p className="text-sm font-semibold text-slate-900">{displayDate(bom.bom_date)}</p>
           </div>
           <div>
             <p className="font-semibold uppercase tracking-wide text-slate-500">Project / Job #</p>
-            <p className="text-sm font-semibold text-slate-900">{bom.project_job || '-'}</p>
+            <p className="text-sm font-semibold text-slate-900">{bom.project_job_number || '-'}</p>
           </div>
         </section>
 
