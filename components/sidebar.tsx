@@ -21,15 +21,26 @@ const baseNavSections = [
   {
     title: 'Operations',
     links: [
-      { href: '/kit-tracker', label: 'Kit Tracker', icon: '🧰' },
+      { href: '/inventory', label: 'Inventory Database', icon: '📦' },
+      { href: '/transactions', label: 'Inventory Transactions', icon: '📊' },
+      { href: '/serial-traceability', label: 'Serial Traceability', icon: '🔍' },
+      { href: '/projects-builds', label: 'Projects / Builds', icon: '🏗️' },
+      { href: '/shipment-log', label: 'Shipment Log', icon: '📋' },
+      { href: '/freight-quotes', label: 'Freight Quotes', icon: '🚛' },
+      { href: '/open-pos', label: 'Open POs', icon: '📑' },
       { href: '/receiving', label: 'Receiving', icon: '📥' },
       { href: '/locations', label: 'Locations', icon: '📍' },
+      { href: '/kit-tracker', label: 'Kit Tracker', icon: '🧰' },
+      { href: '/bom', label: 'Bill of Materials', icon: '📄' },
     ],
   },
   {
     title: 'Inventory',
     links: [
-      { href: '/inventory', label: 'Supplies Inventory', icon: '📦' },
+      { href: '/vendors', label: 'Vendors', icon: '🏢' },
+      { href: '/locations', label: 'Locations', icon: '📍' },
+      { href: '/departments', label: 'Departments', icon: '🏬' },
+      { href: '/users', label: 'Users', icon: '👤' },
     ],
   },
 ];
@@ -87,8 +98,6 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
               type="button"
               onClick={() => setCollapsed(true)}
               className="mt-10 rounded-xl border border-slate-300 bg-white px-2 py-1 text-sm shadow-sm hover:bg-slate-50"
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
             >
               ⬅️
             </button>
@@ -98,8 +107,6 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
             type="button"
             onClick={() => setCollapsed(false)}
             className="rounded-xl border border-slate-300 bg-white px-2 py-1 text-sm shadow-sm hover:bg-slate-50"
-            aria-label="Expand sidebar"
-            title="Expand sidebar"
           >
             ➡️
           </button>
@@ -109,15 +116,16 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
       <nav className="space-y-6">
         {navSections.map((section) => (
           <div key={section.title}>
-            {!collapsed ? (
+            {!collapsed && (
               <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                 {section.title}
               </div>
-            ) : null}
+            )}
 
             <div className="space-y-2">
               {section.links.map((link) => {
-                const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
+                const active =
+                  pathname === link.href || pathname.startsWith(`${link.href}/`);
 
                 return (
                   <Link
@@ -135,7 +143,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
                     }`}
                   >
                     <span className="text-lg">{link.icon}</span>
-                    {!collapsed ? <span>{link.label}</span> : null}
+                    {!collapsed && <span>{link.label}</span>}
                   </Link>
                 );
               })}
