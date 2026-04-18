@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { createKit, importKits, updateKit } from './actions';
 import {
@@ -154,6 +154,9 @@ function parseKitsCsv(text: string): KitFormInput[] {
 
 export function KitTrackerClient({ kits }: Props) {
   const router = useRouter();
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const entryTableBodyRef = useRef<HTMLTableSectionElement | null>(null);
+
   const [mode, setMode] = useState<'add' | 'edit' | 'upload'>('add');
   const [form, setForm] = useState<KitFormInput>(buildEmptyForm);
   const [entryRows, setEntryRows] = useState<KitFormInput[]>([buildEmptyForm()]);
@@ -174,10 +177,10 @@ export function KitTrackerClient({ kits }: Props) {
         .filter((kit) => statusFilter === 'ALL' || kit.status === statusFilter)
         .filter((kit) => locationFilter === 'ALL' || kit.location === locationFilter)
         .sort((a, b) => {
-        const aDate = a.delivery_scheduled_date ?? a.completed_date ?? '';
-        const bDate = b.delivery_scheduled_date ?? b.completed_date ?? '';
-        return bDate.localeCompare(aDate);
-      }),
+          const aDate = a.delivery_scheduled_date ?? a.completed_date ?? '';
+          const bDate = b.delivery_scheduled_date ?? b.completed_date ?? '';
+          return bDate.localeCompare(aDate);
+        }),
     [kits, locationFilter, statusFilter]
   );
 
@@ -213,7 +216,16 @@ export function KitTrackerClient({ kits }: Props) {
   function addEntryLine() {
     setMode('add');
     setEntryRows((prev) => [...prev, buildEmptyForm()]);
-    setMessage(null);
+    setMessage({
+      ok: true,
+      message: `Added line ${entryRows.length + 1}.`,
+    });
+
+    setTimeout(() => {
+      const tbody = entryTableBodyRef.current;
+      const lastRow = tbody?.lastElementChild as HTMLElement | null;
+      lastRow?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 75);
   }
 
   function updateEntryRow<K extends keyof KitFormInput>(
@@ -248,6 +260,10 @@ export function KitTrackerClient({ kits }: Props) {
     });
   }
 
+  function openUploadPicker() {
+    uploadInputRef.current?.click();
+  }
+
   async function handleUpload(file: File | undefined) {
     if (!file) return;
 
@@ -272,6 +288,14 @@ export function KitTrackerClient({ kits }: Props) {
 
     const text = await file.text();
     const rows = parseKitsCsv(text);
+
+    if (rows.length === 0) {
+      setMessage({
+        ok: false,
+        message: 'No usable rows were found in the CSV file.',
+      });
+      return;
+    }
 
     startTransition(async () => {
       const result = await importKits(rows);
@@ -301,15 +325,19 @@ export function KitTrackerClient({ kits }: Props) {
             <button type="button" onClick={addEntryLine} className="erp-button">
               Add line
             </button>
-            <label className="erp-button cursor-pointer">
+
+            <button type="button" onClick={openUploadPicker} className="erp-button">
               Upload CSV
-              <input
-                type="file"
-                accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                className="hidden"
-                onChange={(event) => handleUpload(event.target.files?.[0])}
-              />
-            </label>
+            </button>
+
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={(event) => handleUpload(event.target.files?.[0])}
+            />
+
             {mode === 'edit' ? (
               <button type="button" onClick={startAdd} className="erp-button">
                 Cancel Edit
@@ -320,135 +348,144 @@ export function KitTrackerClient({ kits }: Props) {
 
         {mode === 'edit' ? (
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Kit Number</label>
-            <input
-              value={form.kit_number}
-              onChange={(event) => updateField('kit_number', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              placeholder="KIT-0001"
-            />
-          </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Kit Number</label>
+              <input
+                value={form.kit_number}
+                onChange={(event) => updateField('kit_number', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder="KIT-0001"
+              />
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Kit Name</label>
-            <input
-              value={form.kit_name}
-              onChange={(event) => updateField('kit_name', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              placeholder="PAA V6 Rack Kit"
-            />
-          </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Kit Name</label>
+              <input
+                value={form.kit_name}
+                onChange={(event) => updateField('kit_name', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder="PAA V6 Rack Kit"
+              />
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Project</label>
-            <input
-              value={form.project_name}
-              onChange={(event) => updateField('project_name', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Project or job"
-            />
-          </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Project</label>
+              <input
+                value={form.project_name}
+                onChange={(event) => updateField('project_name', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Project or job"
+              />
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Location</label>
-            <input
-              value={form.location}
-              onChange={(event) => updateField('location', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              placeholder="SEA991"
-            />
-          </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Location</label>
+              <input
+                value={form.location}
+                onChange={(event) => updateField('location', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder="SEA991"
+              />
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Status</label>
-            <select
-              value={form.status}
-              onChange={(event) => updateField('status', event.target.value as KitStatus)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            >
-              {KIT_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Status</label>
+              <select
+                value={form.status}
+                onChange={(event) => updateField('status', event.target.value as KitStatus)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                {KIT_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Block Reason</label>
-            <select
-              value={form.block_reason}
-              onChange={(event) =>
-                updateField('block_reason', event.target.value as BlockReason | '')
-              }
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            >
-              <option value="">None</option>
-              {BLOCK_REASONS.map((reason) => (
-                <option key={reason} value={reason}>
-                  {reason}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Block Reason</label>
+              <select
+                value={form.block_reason}
+                onChange={(event) =>
+                  updateField('block_reason', event.target.value as BlockReason | '')
+                }
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">None</option>
+                {BLOCK_REASONS.map((reason) => (
+                  <option key={reason} value={reason}>
+                    {reason}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Completed Date</label>
-            <input
-              type="date"
-              value={form.completed_date}
-              onChange={(event) => updateField('completed_date', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Completed Date</label>
+              <input
+                type="date"
+                value={form.completed_date}
+                onChange={(event) => updateField('completed_date', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">
-              Delivery Scheduled Date
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Delivery Scheduled Date
+              </label>
+              <input
+                type="date"
+                value={form.delivery_scheduled_date}
+                onChange={(event) => updateField('delivery_scheduled_date', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.delivery_requested}
+                onChange={(event) => updateField('delivery_requested', event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              Delivery Requested
             </label>
-            <input
-              type="date"
-              value={form.delivery_scheduled_date}
-              onChange={(event) => updateField('delivery_scheduled_date', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </div>
 
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-            <input
-              type="checkbox"
-              checked={form.delivery_requested}
-              onChange={(event) => updateField('delivery_requested', event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            Delivery Requested
-          </label>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Delivery Requested Date
+              </label>
+              <input
+                type="date"
+                value={form.delivery_requested_date}
+                onChange={(event) => updateField('delivery_requested_date', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">
-              Delivery Requested Date
-            </label>
-            <input
-              type="date"
-              value={form.delivery_requested_date}
-              onChange={(event) => updateField('delivery_requested_date', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </div>
-
-          <div className="md:col-span-2 xl:col-span-3">
-            <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>
-            <input
-              value={form.notes}
-              onChange={(event) => updateField('notes', event.target.value)}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Operational notes"
-            />
-          </div>
+            <div className="md:col-span-2 xl:col-span-3">
+              <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>
+              <input
+                value={form.notes}
+                onChange={(event) => updateField('notes', event.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Operational notes"
+              />
+            </div>
           </div>
         ) : (
           <div className="mt-4 space-y-3">
+            <div className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              <div className="font-medium text-slate-700">
+                Entry rows: <span className="text-slate-900">{entryRows.length}</span>
+              </div>
+              <div className="text-slate-500">
+                Add rows, then click <span className="font-medium text-slate-700">Save lines</span>.
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="min-w-[1600px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -467,7 +504,7 @@ export function KitTrackerClient({ kits }: Props) {
                     <th className="px-3 py-2">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={entryTableBodyRef}>
                   {entryRows.map((row, rowIndex) => (
                     <tr key={rowIndex} className="border-b border-slate-100 align-top">
                       <td className="px-3 py-2">
@@ -614,7 +651,11 @@ export function KitTrackerClient({ kits }: Props) {
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           {message ? (
-            <div className={`text-sm font-medium ${message.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+            <div
+              className={`text-sm font-medium ${
+                message.ok ? 'text-emerald-700' : 'text-rose-700'
+              }`}
+            >
               <p>{message.message}</p>
               {message.ok && message.summary?.skipReasons.length ? (
                 <ul className="mt-1 list-disc pl-5 text-xs">
