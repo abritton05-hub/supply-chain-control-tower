@@ -17,7 +17,6 @@ type NavLink = {
 };
 
 const baseNavLinks: NavLink[] = [
-  { href: '/project-dashboard', label: 'Project Dashboard', icon: '📁' },
   { href: '/inventory', label: 'Inventory', icon: '📦' },
   { href: '/ai-document-intake', label: 'AI Document Intake', icon: '📎' },
   { href: '/pull-requests', label: 'Pull Requests', icon: '📄' },
@@ -62,7 +61,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
       >
         {!collapsed ? (
           <>
-            <Link href="/project-dashboard" className="block w-full">
+            <Link href="/inventory" className="block w-full">
               <div className="flex flex-col items-center text-center">
                 <Image
                   src="/denali-logo.png"
@@ -93,6 +92,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
               type="button"
               onClick={() => setCollapsed(true)}
               className="mt-8 rounded-full border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm transition hover:bg-slate-50"
+              aria-label="Collapse sidebar"
             >
               ←
             </button>
@@ -102,6 +102,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
             type="button"
             onClick={() => setCollapsed(false)}
             className="rounded-full border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm transition hover:bg-slate-50"
+            aria-label="Expand sidebar"
           >
             →
           </button>
