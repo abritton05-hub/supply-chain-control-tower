@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   PULL_REQUEST_DRAFT_STORAGE_KEY,
@@ -90,7 +90,7 @@ function confidenceClass(value: number | null | undefined) {
 
 function FieldConfidence({ value }: { value: number | null | undefined }) {
   return (
-    <span className={`rounded border px-2 py-1 text-xs font-semibold ${confidenceClass(value)}`}>
+    <span className={`inline-flex rounded border px-2 py-1 text-xs font-semibold ${confidenceClass(value)}`}>
       {confidenceBandLabel(value)}
     </span>
   );
@@ -134,8 +134,9 @@ export function AiDocumentIntakeClient() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
 
-  const canExtract = documentId && classification;
-  const weakClassification = !classification || classification.confidence < 0.85 || classification.document_type === 'unknown';
+  const canExtract = Boolean(documentId && classification);
+  const weakClassification =
+    !classification || classification.confidence < 0.85 || classification.document_type === 'unknown';
 
   const issueGroups = useMemo(
     () => ({
@@ -145,11 +146,23 @@ export function AiDocumentIntakeClient() {
     [validationIssues]
   );
 
+  useEffect(() => {
+    return () => {
+      if (sourcePreview?.imageUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(sourcePreview.imageUrl);
+      }
+    };
+  }, [sourcePreview]);
+
   function markEdited(field: string) {
     setEditedFields((prev) => (prev.includes(field) ? prev : [...prev, field]));
   }
 
   function resetIntake() {
+    if (sourcePreview?.imageUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(sourcePreview.imageUrl);
+    }
+
     setSelectedFile(null);
     setPastedText('');
     setSourcePreview(null);
@@ -160,9 +173,14 @@ export function AiDocumentIntakeClient() {
     setEditedFields([]);
     setMessage('');
     setStage('idle');
+    setSelectedWorkflow('receiving');
   }
 
   function handleFile(file: File | null) {
+    if (sourcePreview?.imageUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(sourcePreview.imageUrl);
+    }
+
     setSelectedFile(file);
     setPastedText('');
     setDocumentId('');
@@ -170,6 +188,8 @@ export function AiDocumentIntakeClient() {
     setExtraction(null);
     setValidationIssues([]);
     setEditedFields([]);
+    setMessage('');
+    setStage('idle');
 
     if (!file) {
       setSourcePreview(null);
@@ -179,13 +199,17 @@ export function AiDocumentIntakeClient() {
     const imageUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : '';
     setSourcePreview({
       label: file.name || 'Uploaded file',
-      detail: `${file.type || 'Unknown type'} · ${Math.ceil(file.size / 1024)} KB`,
+      detail: `${file.type || 'Unknown type'} • ${Math.ceil(file.size / 1024)} KB`,
       text: '',
       imageUrl,
     });
   }
 
   function handleText(value: string) {
+    if (sourcePreview?.imageUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(sourcePreview.imageUrl);
+    }
+
     setPastedText(value);
     setSelectedFile(null);
     setDocumentId('');
@@ -193,6 +217,9 @@ export function AiDocumentIntakeClient() {
     setExtraction(null);
     setValidationIssues([]);
     setEditedFields([]);
+    setMessage('');
+    setStage('idle');
+
     setSourcePreview(
       value.trim()
         ? {
@@ -357,6 +384,7 @@ export function AiDocumentIntakeClient() {
         result.draft.workflow_type === 'receiving'
           ? RECEIVING_DRAFT_STORAGE_KEY
           : PULL_REQUEST_DRAFT_STORAGE_KEY;
+
       window.localStorage.setItem(storageKey, JSON.stringify(result.draft.draft));
       setStage('applied');
       router.push(`${result.route}?draft=ai-intake`);
@@ -368,229 +396,254 @@ export function AiDocumentIntakeClient() {
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,430px)_minmax(0,1fr)]">
-      <section className="space-y-4">
-        <div className="erp-panel p-4">
-          <h2 className="text-base font-semibold text-slate-900">Source</h2>
+    <div className="w-full min-w-0">
+      <div className="mx-auto w-full max-w-7xl min-w-0 overflow-x-hidden p-4 sm:p-6">
+        <div className="mb-4">
+          <h1 className="text-2xl font-semibold text-slate-900">AI Document Intake</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Upload a PDF or image, or paste operational text from an email or note.
+            Classify uploaded documents, extract structured values, review them, and apply them to the correct draft workflow.
           </p>
-
-          <div className="mt-4 space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">PDF, Image, Screenshot</span>
-              <input
-                type="file"
-                accept="application/pdf,image/*"
-                onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
-                className="block w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Pasted Text</label>
-              <textarea
-                value={pastedText}
-                onChange={(event) => handleText(event.target.value)}
-                rows={8}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Paste receiving details, packing slip text, request notes, or email content"
-              />
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={uploadSource}
-              disabled={isUploading || (!selectedFile && !pastedText.trim())}
-              className="erp-button"
-            >
-              {isUploading ? 'Uploading...' : 'Upload Source'}
-            </button>
-            <button type="button" onClick={resetIntake} className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-              Reset
-            </button>
-          </div>
         </div>
 
-        <div className="erp-panel p-4">
-          <h2 className="text-base font-semibold text-slate-900">Preview</h2>
-          {sourcePreview ? (
-            <div className="mt-3 space-y-3">
-              <div>
-                <div className="text-sm font-semibold text-slate-800">{sourcePreview.label}</div>
-                <div className="text-xs text-slate-500">{sourcePreview.detail}</div>
-              </div>
-
-              {sourcePreview.imageUrl ? (
-                <img
-                  src={sourcePreview.imageUrl}
-                  alt="Uploaded intake source"
-                  className="max-h-[420px] w-full rounded border border-slate-200 object-contain"
-                />
-              ) : null}
-
-              {sourcePreview.text ? (
-                <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-                  {sourcePreview.text}
-                </pre>
-              ) : null}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-slate-500">No source selected yet.</p>
-          )}
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="erp-panel p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-slate-900">Classification</h2>
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,430px)_minmax(0,1fr)]">
+          <section className="min-w-0 space-y-4">
+            <div className="erp-panel overflow-hidden p-4">
+              <h2 className="text-base font-semibold text-slate-900">Source</h2>
               <p className="mt-1 text-sm text-slate-500">
-                The workflow must be selected before any fields are extracted.
+                Upload a PDF or image, or paste operational text from an email or note.
               </p>
-            </div>
-            <button
-              type="button"
-              onClick={classifyDocument}
-              disabled={!documentId || isClassifying}
-              className="erp-button"
-            >
-              {isClassifying ? 'Classifying...' : 'Classify'}
-            </button>
-          </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <StatusTile label="Stage" value={stage} />
-            <StatusTile label="Document" value={documentId ? 'Uploaded' : 'Not Uploaded'} />
-            <StatusTile
-              label="AI Classification"
-              value={classification ? workflowLabel(classification.document_type) : '-'}
-            />
-          </div>
+              <div className="mt-4 space-y-3">
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">PDF, Image, Screenshot</span>
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
+                    className="block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                  />
+                </label>
 
-          {classification ? (
-            <div className="mt-4 rounded border border-slate-200 bg-white p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-semibold text-slate-800">
-                  {workflowLabel(classification.document_type)}
-                </span>
-                <FieldConfidence value={classification.confidence} />
-                {classification.document_type === 'unknown' ? (
-                  <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
-                    Manual selection needed
-                  </span>
-                ) : null}
-              </div>
-              {classification.reason_codes.length ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {classification.reason_codes.map((reason) => (
-                    <span key={reason} className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
-                      {reason}
-                    </span>
-                  ))}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Pasted Text</label>
+                  <textarea
+                    value={pastedText}
+                    onChange={(event) => handleText(event.target.value)}
+                    rows={8}
+                    className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                    placeholder="Paste receiving details, packing slip text, request notes, or email content"
+                  />
                 </div>
-              ) : null}
-            </div>
-          ) : null}
+              </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">
-                Workflow {weakClassification ? 'Override' : 'Selection'}
-              </span>
-              <select
-                value={selectedWorkflow}
-                onChange={(event) => setSelectedWorkflow(event.target.value as ConfirmableIntakeWorkflow)}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="receiving">Receiving</option>
-                <option value="pull_request">Pull Request</option>
-              </select>
-            </label>
-
-            <button
-              type="button"
-              onClick={extractDocument}
-              disabled={!canExtract || isExtracting}
-              className="erp-button"
-            >
-              {isExtracting ? 'Extracting...' : 'Extract Fields'}
-            </button>
-          </div>
-        </div>
-
-        <div className="erp-panel p-4">
-          <h2 className="text-base font-semibold text-slate-900">Review</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Edit values here before applying them to the target workflow draft.
-          </p>
-
-          {extraction?.workflow === 'receiving' ? (
-            <ReceivingReview
-              extraction={extraction}
-              onChange={(next, field) => {
-                setExtraction(next);
-                markEdited(field);
-              }}
-            />
-          ) : extraction?.workflow === 'pull_request' ? (
-            <PullRequestReview
-              extraction={extraction}
-              onChange={(next, field) => {
-                setExtraction(next);
-                markEdited(field);
-              }}
-            />
-          ) : (
-            <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-              Extracted fields will appear here after classification and extraction.
-            </div>
-          )}
-        </div>
-
-        {extraction ? (
-          <div className="erp-panel p-4">
-            <h2 className="text-base font-semibold text-slate-900">Validation</h2>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <ValidationPanel title="Errors" issues={issueGroups.errors} />
-              <ValidationPanel title="Warnings" issues={issueGroups.warnings} />
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-slate-500">
-                Apply creates a local draft only. Final save still happens on the workflow page.
-              </p>
-              <div className="flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => applyReview('rejected')}
-                  disabled={isApplying}
-                  className="rounded border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
-                >
-                  Reject Intake
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applyReview(editedFields.length ? 'edited' : 'approved')}
-                  disabled={isApplying || issueGroups.errors.length > 0}
+                  onClick={uploadSource}
+                  disabled={isUploading || (!selectedFile && !pastedText.trim())}
                   className="erp-button"
                 >
-                  {isApplying ? 'Applying...' : `Apply to ${workflowLabel(extraction.workflow)} Draft`}
+                  {isUploading ? 'Uploading...' : 'Upload Source'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetIntake}
+                  className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Reset
                 </button>
               </div>
             </div>
-          </div>
-        ) : null}
 
-        {message ? (
-          <div className="rounded border border-slate-200 bg-white p-3 text-sm font-medium text-slate-700">
-            {message}
-          </div>
-        ) : null}
-      </section>
+            <div className="erp-panel overflow-hidden p-4">
+              <h2 className="text-base font-semibold text-slate-900">Preview</h2>
+
+              {sourcePreview ? (
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <div className="break-words text-sm font-semibold text-slate-800">{sourcePreview.label}</div>
+                    <div className="text-xs text-slate-500">{sourcePreview.detail}</div>
+                  </div>
+
+                  {sourcePreview.imageUrl ? (
+                    <div className="max-h-[420px] overflow-auto rounded border border-slate-200 bg-slate-50 p-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={sourcePreview.imageUrl}
+                        alt="Uploaded intake source"
+                        className="block max-h-[380px] w-full object-contain"
+                      />
+                    </div>
+                  ) : null}
+
+                  {sourcePreview.text ? (
+                    <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      {sourcePreview.text}
+                    </pre>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-slate-500">No source selected yet.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="min-w-0 space-y-4">
+            <div className="erp-panel overflow-hidden p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">Classification</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    The workflow must be selected before any fields are extracted.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={classifyDocument}
+                  disabled={!documentId || isClassifying}
+                  className="erp-button"
+                >
+                  {isClassifying ? 'Classifying...' : 'Classify'}
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <StatusTile label="Stage" value={stage} />
+                <StatusTile label="Document" value={documentId ? 'Uploaded' : 'Not Uploaded'} />
+                <StatusTile
+                  label="AI Classification"
+                  value={classification ? workflowLabel(classification.document_type) : '-'}
+                />
+              </div>
+
+              {classification ? (
+                <div className="mt-4 rounded border border-slate-200 bg-white p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800">
+                      {workflowLabel(classification.document_type)}
+                    </span>
+                    <FieldConfidence value={classification.confidence} />
+                    {classification.document_type === 'unknown' ? (
+                      <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
+                        Manual selection needed
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {classification.reason_codes.length ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {classification.reason_codes.map((reason) => (
+                        <span
+                          key={reason}
+                          className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600"
+                        >
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">
+                    Workflow {weakClassification ? 'Override' : 'Selection'}
+                  </span>
+                  <select
+                    value={selectedWorkflow}
+                    onChange={(event) => setSelectedWorkflow(event.target.value as ConfirmableIntakeWorkflow)}
+                    className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                  >
+                    <option value="receiving">Receiving</option>
+                    <option value="pull_request">Pull Request</option>
+                  </select>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={extractDocument}
+                  disabled={!canExtract || isExtracting}
+                  className="erp-button"
+                >
+                  {isExtracting ? 'Extracting...' : 'Extract Fields'}
+                </button>
+              </div>
+            </div>
+
+            <div className="erp-panel overflow-hidden p-4">
+              <h2 className="text-base font-semibold text-slate-900">Review</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Edit values here before applying them to the target workflow draft.
+              </p>
+
+              {extraction?.workflow === 'receiving' ? (
+                <ReceivingReview
+                  extraction={extraction}
+                  onChange={(next, field) => {
+                    setExtraction(next);
+                    markEdited(field);
+                  }}
+                />
+              ) : extraction?.workflow === 'pull_request' ? (
+                <PullRequestReview
+                  extraction={extraction}
+                  onChange={(next, field) => {
+                    setExtraction(next);
+                    markEdited(field);
+                  }}
+                />
+              ) : (
+                <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                  Extracted fields will appear here after classification and extraction.
+                </div>
+              )}
+            </div>
+
+            {extraction ? (
+              <div className="erp-panel overflow-hidden p-4">
+                <h2 className="text-base font-semibold text-slate-900">Validation</h2>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <ValidationPanel title="Errors" issues={issueGroups.errors} />
+                  <ValidationPanel title="Warnings" issues={issueGroups.warnings} />
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-slate-500">
+                    Apply creates a local draft only. Final save still happens on the workflow page.
+                  </p>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyReview('rejected')}
+                      disabled={isApplying}
+                      className="rounded border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
+                    >
+                      Reject Intake
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyReview(editedFields.length ? 'edited' : 'approved')}
+                      disabled={isApplying || issueGroups.errors.length > 0}
+                      className="erp-button"
+                    >
+                      {isApplying ? 'Applying...' : `Apply to ${workflowLabel(extraction.workflow)} Draft`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {message ? (
+              <div className="rounded border border-slate-200 bg-white p-3 text-sm font-medium text-slate-700">
+                {message}
+              </div>
+            ) : null}
+          </section>
+        </div>
+      </div>
     </div>
   );
 }
@@ -599,7 +652,7 @@ function StatusTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-sm font-semibold capitalize text-slate-900">{value}</div>
+      <div className="mt-1 break-words text-sm font-semibold capitalize text-slate-900">{value}</div>
     </div>
   );
 }
@@ -618,13 +671,13 @@ function EditableField({
   return (
     <label className="block">
       <span className="mb-1 flex items-center justify-between gap-2 text-sm font-medium text-slate-700">
-        {label}
+        <span>{label}</span>
         <FieldConfidence value={confidence} />
       </span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+        className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
       />
     </label>
   );
@@ -669,12 +722,42 @@ function ReceivingReview({
   return (
     <div className="mt-4 space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
-        <EditableField label="Vendor" value={toText(extraction.header.vendor_name)} confidence={extraction.confidence.vendor_name} onChange={(value) => updateHeader('vendor_name', value)} />
-        <EditableField label="PO Number" value={toText(extraction.header.po_number)} confidence={extraction.confidence.po_number} onChange={(value) => updateHeader('po_number', value)} />
-        <EditableField label="Shipment ID" value={toText(extraction.header.shipment_id)} confidence={extraction.confidence.shipment_id} onChange={(value) => updateHeader('shipment_id', value)} />
-        <EditableField label="Tracking Number" value={toText(extraction.header.tracking_number)} confidence={extraction.confidence.tracking_number} onChange={(value) => updateHeader('tracking_number', value)} />
-        <EditableField label="Carrier" value={toText(extraction.header.carrier)} confidence={extraction.confidence.carrier} onChange={(value) => updateHeader('carrier', value)} />
-        <EditableField label="Received Date" value={toText(extraction.header.received_date)} confidence={extraction.confidence.received_date} onChange={(value) => updateHeader('received_date', value)} />
+        <EditableField
+          label="Vendor"
+          value={toText(extraction.header.vendor_name)}
+          confidence={extraction.confidence.vendor_name}
+          onChange={(value) => updateHeader('vendor_name', value)}
+        />
+        <EditableField
+          label="PO Number"
+          value={toText(extraction.header.po_number)}
+          confidence={extraction.confidence.po_number}
+          onChange={(value) => updateHeader('po_number', value)}
+        />
+        <EditableField
+          label="Shipment ID"
+          value={toText(extraction.header.shipment_id)}
+          confidence={extraction.confidence.shipment_id}
+          onChange={(value) => updateHeader('shipment_id', value)}
+        />
+        <EditableField
+          label="Tracking Number"
+          value={toText(extraction.header.tracking_number)}
+          confidence={extraction.confidence.tracking_number}
+          onChange={(value) => updateHeader('tracking_number', value)}
+        />
+        <EditableField
+          label="Carrier"
+          value={toText(extraction.header.carrier)}
+          confidence={extraction.confidence.carrier}
+          onChange={(value) => updateHeader('carrier', value)}
+        />
+        <EditableField
+          label="Received Date"
+          value={toText(extraction.header.received_date)}
+          confidence={extraction.confidence.received_date}
+          onChange={(value) => updateHeader('received_date', value)}
+        />
       </div>
 
       <LineItemsTable
@@ -760,23 +843,53 @@ function PullRequestReview({
   return (
     <div className="mt-4 space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
-        <EditableField label="Requestor" value={toText(extraction.header.requestor_name)} confidence={extraction.confidence.requestor_name} onChange={(value) => updateHeader('requestor_name', value)} />
-        <EditableField label="Request Date" value={toText(extraction.header.request_date)} confidence={extraction.confidence.request_date} onChange={(value) => updateHeader('request_date', value)} />
-        <EditableField label="Department" value={toText(extraction.header.department)} confidence={extraction.confidence.department} onChange={(value) => updateHeader('department', value)} />
-        <EditableField label="Project Code" value={toText(extraction.header.project_code)} confidence={extraction.confidence.project_code} onChange={(value) => updateHeader('project_code', value)} />
-        <EditableField label="Needed By" value={toText(extraction.header.needed_by_date)} confidence={extraction.confidence.needed_by_date} onChange={(value) => updateHeader('needed_by_date', value)} />
-        <EditableField label="Location" value={toText(extraction.header.location)} confidence={extraction.confidence.location} onChange={(value) => updateHeader('location', value)} />
+        <EditableField
+          label="Requestor"
+          value={toText(extraction.header.requestor_name)}
+          confidence={extraction.confidence.requestor_name}
+          onChange={(value) => updateHeader('requestor_name', value)}
+        />
+        <EditableField
+          label="Request Date"
+          value={toText(extraction.header.request_date)}
+          confidence={extraction.confidence.request_date}
+          onChange={(value) => updateHeader('request_date', value)}
+        />
+        <EditableField
+          label="Department"
+          value={toText(extraction.header.department)}
+          confidence={extraction.confidence.department}
+          onChange={(value) => updateHeader('department', value)}
+        />
+        <EditableField
+          label="Project Code"
+          value={toText(extraction.header.project_code)}
+          confidence={extraction.confidence.project_code}
+          onChange={(value) => updateHeader('project_code', value)}
+        />
+        <EditableField
+          label="Needed By"
+          value={toText(extraction.header.needed_by_date)}
+          confidence={extraction.confidence.needed_by_date}
+          onChange={(value) => updateHeader('needed_by_date', value)}
+        />
+        <EditableField
+          label="Location"
+          value={toText(extraction.header.location)}
+          confidence={extraction.confidence.location}
+          onChange={(value) => updateHeader('location', value)}
+        />
       </div>
 
       <label className="block">
         <span className="mb-1 flex items-center justify-between gap-2 text-sm font-medium text-slate-700">
-          Notes
+          <span>Notes</span>
           <FieldConfidence value={extraction.confidence.notes} />
         </span>
         <textarea
           value={toText(extraction.header.notes)}
           onChange={(event) => updateHeader('notes', event.target.value)}
-          className="min-h-20 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          className="min-h-20 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
         />
       </label>
 
@@ -840,18 +953,21 @@ function LineItemsTable({
     );
   }
 
-  const columns = workflow === 'receiving'
-    ? ['Part Number', 'Description', 'Qty', 'UOM', 'Location']
-    : ['Part Number', 'Description', 'Qty', 'UOM'];
+  const columns =
+    workflow === 'receiving'
+      ? ['Part Number', 'Description', 'Qty', 'UOM', 'Location']
+      : ['Part Number', 'Description', 'Qty', 'UOM'];
 
   return (
-    <div className="overflow-x-auto rounded border border-slate-200">
-      <table className="min-w-full text-sm">
+    <div className="w-full min-w-0 overflow-x-auto rounded border border-slate-200">
+      <table className="min-w-full table-auto text-sm">
         <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
           <tr>
             <th className="px-3 py-2">Line</th>
             {columns.map((column) => (
-              <th key={column} className="px-3 py-2">{column}</th>
+              <th key={column} className="px-3 py-2">
+                {column}
+              </th>
             ))}
           </tr>
         </thead>
@@ -868,7 +984,7 @@ function LineItemsTable({
                     aria-label={`${cell.label} line ${index + 1}`}
                     value={cell.value}
                     onChange={(event) => cell.onChange(event.target.value)}
-                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
                   />
                 </td>
               ))}
@@ -891,6 +1007,7 @@ function Warnings({ extraction }: { extraction: IntakeExtraction }) {
             : 'None reported.'}
         </div>
       </div>
+
       <div className="rounded border border-slate-200 bg-slate-50 p-3">
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI Warnings</div>
         <div className="mt-2 text-sm text-slate-700">
