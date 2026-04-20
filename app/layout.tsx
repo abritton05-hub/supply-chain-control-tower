@@ -2,7 +2,7 @@ import './globals.css';
 
 export const metadata = {
   title: 'Supply Chain Control Tower',
-  description: 'Supply Chain Control Tower',
+  description: 'Operational control system',
 };
 
 export default function RootLayout({
