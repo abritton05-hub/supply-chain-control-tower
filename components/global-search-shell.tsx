@@ -18,7 +18,7 @@ export function GlobalSearchShell() {
   const [query, setQuery] = useState('');
 
   return (
-    <div className="relative w-full max-w-2xl">
+    <div className="relative min-w-0 flex-1 lg:max-w-2xl">
       <label className="sr-only" htmlFor="global-search">
         Global search
       </label>

@@ -1,10 +1,15 @@
+import { unstable_noStore as noStore } from 'next/cache';
 import { KpiCard } from '@/components/kpi-card';
 import { SectionHeader } from '@/components/section-header';
 import { supabaseServer } from '@/lib/supabase/server';
 import { InventoryClient } from './inventory-client';
 import type { InventoryRecord } from './types';
 
+export const dynamic = 'force-dynamic';
+
 export default async function InventoryPage() {
+  noStore();
+
   const supabase = await supabaseServer();
 
   const { data, error } = await supabase
@@ -12,7 +17,7 @@ export default async function InventoryPage() {
     .select(
       'id,item_id,part_number,description,category,location,qty_on_hand,reorder_point,created_at,updated_at'
     )
-    .order('created_at', { ascending: false });
+    .order('item_id', { ascending: true });
 
   const inventory = (data ?? []) as InventoryRecord[];
 
@@ -23,6 +28,7 @@ export default async function InventoryPage() {
   }).length;
 
   const outCount = inventory.filter((item) => (item.qty_on_hand ?? 0) <= 0).length;
+
   const inStock = inventory.filter((item) => {
     const qty = item.qty_on_hand ?? 0;
     const reorder = item.reorder_point ?? 0;

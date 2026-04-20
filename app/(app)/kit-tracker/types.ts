@@ -39,6 +39,7 @@ export type KitRecord = {
 
 export type KitFormInput = {
   id?: string;
+  source_row_number?: number;
   kit_number: string;
   kit_name: string;
   project_name: string;
@@ -59,6 +60,7 @@ export type KitActionResult =
 export type KitImportSummary = {
   inserted: number;
   updated: number;
-  skipped: number;
+  skippedBlank: number;
+  skippedInvalid: number;
   skipReasons: string[];
 };

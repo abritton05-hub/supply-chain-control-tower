@@ -1,103 +1,50 @@
-create table if not exists public.inventory_transactions (
-  id uuid primary key default gen_random_uuid(),
-  transaction_date date not null default current_date,
-  item_id text not null references public.inventory(item_id) on update cascade,
-  part_number text,
-  description text,
-  transaction_type text not null
-    check (
-      transaction_type in (
-        'RECEIPT',
-        'ISSUE',
-        'TRANSFER',
-        'ADJUSTMENT',
-        'CYCLE COUNT',
-        'BUILD ISSUE',
-        'BUILD COMPLETE',
-        'SHIP',
-        'RETURN',
-        'SCRAP',
-        'LOCATION MOVE'
-      )
-    ),
-  quantity numeric not null check (quantity > 0),
-  from_location text,
-  to_location text,
-  reference text,
-  notes text,
-  performed_by text,
-  created_at timestamptz not null default now()
-);
+import { SectionHeader } from '@/components/section-header';
+import { supabaseServer } from '@/lib/supabase/server';
+import { ReceivingClient } from './receiving-client';
+import type { InventoryOption, InventoryTransaction } from './types';
 
-create index if not exists inventory_transactions_item_id_idx
-  on public.inventory_transactions (item_id);
-create index if not exists inventory_transactions_type_idx
-  on public.inventory_transactions (transaction_type);
-create index if not exists inventory_transactions_created_at_idx
-  on public.inventory_transactions (created_at desc);
+export const dynamic = 'force-dynamic';
 
-create or replace function public.receive_inventory_item(
-  p_item_id text,
-  p_quantity numeric,
-  p_reference text default null,
-  p_notes text default null,
-  p_performed_by text default null
-)
-returns uuid
-language plpgsql
-as $$
-declare
-  v_item public.inventory%rowtype;
-  v_transaction_id uuid;
-begin
-  if p_item_id is null or btrim(p_item_id) = '' then
-    raise exception 'Item ID is required.';
-  end if;
+export default async function ReceivingPage() {
+  const supabase = await supabaseServer();
 
-  if p_quantity is null or p_quantity <= 0 then
-    raise exception 'Received quantity must be greater than 0.';
-  end if;
+  const { data: inventoryData, error: inventoryError } = await supabase
+    .from('inventory')
+    .select('id,item_id,part_number,description,category,location,qty_on_hand,reorder_point')
+    .order('item_id', { ascending: true });
 
-  select *
-  into v_item
-  from public.inventory
-  where item_id = btrim(p_item_id)
-  for update;
+  const { data: receiptData, error: receiptError } = await supabase
+    .from('inventory_transactions')
+    .select(
+      'id,transaction_date,item_id,part_number,description,transaction_type,quantity,from_location,to_location,reference,notes,performed_by,created_at'
+    )
+    .eq('transaction_type', 'RECEIPT')
+    .order('created_at', { ascending: false })
+    .limit(50);
 
-  if not found then
-    raise exception 'Inventory item % does not exist.', p_item_id;
-  end if;
+  const inventory = (inventoryData ?? []) as InventoryOption[];
+  const receipts = (receiptData ?? []) as InventoryTransaction[];
 
-  update public.inventory
-  set qty_on_hand = qty_on_hand + p_quantity
-  where id = v_item.id;
+  const setupError = inventoryError?.message ?? receiptError?.message ?? '';
 
-  insert into public.inventory_transactions (
-    item_id,
-    part_number,
-    description,
-    transaction_type,
-    quantity,
-    from_location,
-    to_location,
-    reference,
-    notes,
-    performed_by
-  )
-  values (
-    v_item.item_id,
-    v_item.part_number,
-    v_item.description,
-    'RECEIPT',
-    p_quantity,
-    'Receiving',
-    v_item.location,
-    nullif(btrim(coalesce(p_reference, '')), ''),
-    nullif(btrim(coalesce(p_notes, '')), ''),
-    nullif(btrim(coalesce(p_performed_by, '')), '')
-  )
-  returning id into v_transaction_id;
+  return (
+    <div className="space-y-4">
+      <SectionHeader
+        title="Receiving"
+        subtitle="Receive stock against existing inventory items and write the transaction log"
+      />
 
-  return v_transaction_id;
-end;
-$$;
+      {setupError ? (
+        <div className="erp-panel border-rose-200 bg-rose-50 p-5">
+          <h2 className="text-base font-semibold text-rose-800">Receiving is not ready</h2>
+          <p className="mt-2 text-sm leading-6 text-rose-700">
+            Supabase returned: {setupError}. Apply `docs/supabase-receiving.sql`, then reload this
+            page.
+          </p>
+        </div>
+      ) : (
+        <ReceivingClient inventory={inventory} recentReceipts={receipts} />
+      )}
+    </div>
+  );
+}

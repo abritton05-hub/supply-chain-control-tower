@@ -7,6 +7,7 @@ export type InventoryRecord = {
   location: string | null;
   qty_on_hand: number | null;
   reorder_point: number | null;
+  is_supply?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -18,10 +19,25 @@ export type InventoryFormInput = {
   description: string;
   category: string;
   location: string;
-  qty_on_hand: number;
-  reorder_point: number;
+  qty_on_hand: number | null;
+  reorder_point: number | null;
+  is_supply: boolean;
+};
+
+export type InventoryImportField =
+  | 'item_id'
+  | 'part_number'
+  | 'description'
+  | 'category'
+  | 'location'
+  | 'qty_on_hand'
+  | 'reorder_point';
+
+export type InventoryImportInput = InventoryFormInput & {
+  source_row_number?: number;
+  invalid_reasons?: string[];
 };
 
 export type InventoryActionResult =
-  | { ok: true; message: string }
-  | { ok: false; message: string };
+  | { ok: true; message: string; skipReasons?: string[] }
+  | { ok: false; message: string; skipReasons?: string[] };

@@ -3,6 +3,8 @@ import { supabaseServer } from '@/lib/supabase/server';
 import { ReceivingClient } from './receiving-client';
 import type { InventoryOption, InventoryTransaction } from './types';
 
+export const dynamic = 'force-dynamic';
+
 export default async function ReceivingPage() {
   const supabase = await supabaseServer();
 
@@ -22,6 +24,7 @@ export default async function ReceivingPage() {
 
   const inventory = (inventoryData ?? []) as InventoryOption[];
   const receipts = (receiptData ?? []) as InventoryTransaction[];
+
   const setupError = inventoryError?.message ?? receiptError?.message ?? '';
 
   return (

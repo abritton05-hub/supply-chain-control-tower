@@ -31,6 +31,13 @@ function optionalDate(value: string) {
 
 function validateKit(input: KitFormInput): KitActionResult {
   if (!clean(input.kit_number)) {
+    if (clean(input.kit_name) && clean(input.project_name)) {
+      return {
+        ok: false,
+        message: 'Kit number is required. Row had kit name and project, but no kit number.',
+      };
+    }
+
     return { ok: false, message: 'Kit number is required.' };
   }
 
@@ -200,17 +207,20 @@ export async function importKits(inputs: KitFormInput[]): Promise<KitActionResul
 
     const validInputs: KitFormInput[] = [];
     const skipReasons: string[] = [];
+    let skippedBlank = 0;
+    let skippedInvalid = 0;
 
     for (const [index, input] of inputs.entries()) {
-      const rowNumber = index + 2;
+      const rowNumber = input.source_row_number ?? index + 2;
 
       if (isBlankKit(input)) {
-        skipReasons.push(`Row ${rowNumber}: fully blank row skipped.`);
+        skippedBlank += 1;
         continue;
       }
 
       const validation = validateKit(input);
       if (!validation.ok) {
+        skippedInvalid += 1;
         skipReasons.push(`Row ${rowNumber}: ${validation.message}`);
         continue;
       }
@@ -219,9 +229,10 @@ export async function importKits(inputs: KitFormInput[]): Promise<KitActionResul
     }
 
     if (validInputs.length === 0) {
+      const sampleReasons = skipReasons.slice(0, 5).join(' ');
       return {
         ok: false,
-        message: `No valid kit rows to import. Skipped ${skipReasons.length} row(s). ${skipReasons.join(' ')}`,
+        message: `No valid kit rows to import. Skipped ${skippedBlank} blank row(s) and ${skippedInvalid} invalid row(s). ${sampleReasons}`,
       };
     }
 
@@ -249,17 +260,18 @@ export async function importKits(inputs: KitFormInput[]): Promise<KitActionResul
     }
 
     revalidatePath('/kit-tracker');
-    const skipped = skipReasons.length;
-    const reasonText = skipped ? ` Skipped ${skipped}: ${skipReasons.join(' ')}` : '';
+    const sampleReasons = skipReasons.slice(0, 5);
+    const reasonText = sampleReasons.length ? ` Sample issues: ${sampleReasons.join(' ')}` : '';
 
     return {
       ok: true,
-      message: `Inserted ${inserted}, updated ${updated}, skipped ${skipped}.${reasonText}`,
+      message: `Inserted ${inserted}, updated ${updated}, skipped ${skippedBlank} blank and ${skippedInvalid} invalid.${reasonText}`,
       summary: {
         inserted,
         updated,
-        skipped,
-        skipReasons,
+        skippedBlank,
+        skippedInvalid,
+        skipReasons: sampleReasons,
       },
     };
   } catch (error) {

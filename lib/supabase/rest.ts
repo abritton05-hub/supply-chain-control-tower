@@ -3,7 +3,9 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 function getSupabaseConfig() {
   if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Supabase environment variables are missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.');
+    throw new Error(
+      'Supabase environment variables are missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.'
+    );
   }
 
   return { supabaseUrl, supabaseAnonKey };
@@ -52,7 +54,13 @@ export async function supabaseRest<T>(
     return [] as T;
   }
 
-  return (await response.json()) as T;
+  const text = await response.text();
+
+  if (!text.trim()) {
+    return [] as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 export async function getNextBomNumber(): Promise<string> {
@@ -60,17 +68,37 @@ export async function getNextBomNumber(): Promise<string> {
     params: {
       select: 'bom_number',
       order: 'created_at.desc',
-      limit: 100,
+      limit: 200,
     },
   });
 
   const numbers = latest
     .map((record) => record.bom_number ?? '')
     .map((bomNumber) => {
-      const match = bomNumber.match(/^BOM-(\d{6})$/);
+      const match = bomNumber.match(/^DAI-(\d{6})$/);
       return match ? Number(match[1]) : 0;
     });
 
   const maxNumber = numbers.length ? Math.max(...numbers) : 0;
-  return `BOM-${String(maxNumber + 1).padStart(6, '0')}`;
+  return `DAI-${String(maxNumber + 1).padStart(6, '0')}`;
+}
+
+export async function getNextManifestNumber(): Promise<string> {
+  const latest = await supabaseRest<{ manifest_number: string | null }[]>('manifests', {
+    params: {
+      select: 'manifest_number',
+      order: 'created_at.desc',
+      limit: 100,
+    },
+  });
+
+  const numbers = latest
+    .map((record) => record.manifest_number ?? '')
+    .map((manifestNumber) => {
+      const match = manifestNumber.match(/^MAN-(\d{6})$/);
+      return match ? Number(match[1]) : 0;
+    });
+
+  const maxNumber = numbers.length ? Math.max(...numbers) : 0;
+  return `MAN-${String(maxNumber + 1).padStart(6, '0')}`;
 }

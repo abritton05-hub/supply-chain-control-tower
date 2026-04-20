@@ -53,3 +53,25 @@ body {
 .erp-panel {
   @apply rounded-2xl border border-slate-300 bg-white shadow-sm;
 }
+
+@media print {
+  @page {
+    size: letter;
+    margin: 0.35in;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}

@@ -15,6 +15,7 @@ const modules = [
   { title: 'Projects / Builds', bullets: ['Required vs issued qty', 'Shortage visibility', 'Ship readiness status'] },
   { title: 'Purchasing / POs', bullets: ['Open / partial / late state', 'Days-late tracking', 'Receipt linkage to inventory'] },
   { title: 'Shipping / Freight', bullets: ['Shipment log + delay flag', 'Freight quote calculator', 'Carrier/status tracking'] },
+  { title: 'AI Document Intake', bullets: ['Classify source documents first', 'Prefill workflow forms with confidence', 'Require review before save'] },
   { title: 'Roles & Controls', bullets: ['Admin controls', 'Warehouse workflow', 'Purchasing permissions', 'Leadership read-only drilldown'] },
 ];
 

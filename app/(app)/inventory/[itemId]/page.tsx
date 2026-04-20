@@ -1,12 +1,27 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase/server';
+import type { InventoryTransaction } from '../../receiving/types';
 import type { InventoryRecord } from '../types';
 
 function getStatus(qtyOnHand: number, reorderPoint: number) {
   if (qtyOnHand <= 0) return 'OUT';
   if (qtyOnHand <= reorderPoint) return 'LOW STOCK';
   return 'IN STOCK';
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return '-';
+  return new Date(`${value}T00:00:00`).toLocaleDateString();
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '-';
+  return new Date(value).toLocaleString();
+}
+
+function transactionDate(row: InventoryTransaction) {
+  return row.transaction_date ?? row.created_at?.slice(0, 10) ?? null;
 }
 
 export default async function InventoryItemPage({ params }: { params: { itemId: string } }) {
@@ -27,6 +42,16 @@ export default async function InventoryItemPage({ params }: { params: { itemId: 
   if (!data) return notFound();
 
   const item = data as InventoryRecord;
+  const { data: transactionData, error: transactionError } = await supabase
+    .from('inventory_transactions')
+    .select(
+      'id,transaction_date,item_id,part_number,description,transaction_type,quantity,from_location,to_location,reference,notes,performed_by,created_at'
+    )
+    .eq('item_id', item.item_id)
+    .order('created_at', { ascending: false })
+    .limit(25);
+
+  const transactions = (transactionData ?? []) as InventoryTransaction[];
   const qtyOnHand = item.qty_on_hand ?? 0;
   const reorderPoint = item.reorder_point ?? 0;
   const status = getStatus(qtyOnHand, reorderPoint);
@@ -84,13 +109,71 @@ export default async function InventoryItemPage({ params }: { params: { itemId: 
           </div>
           <div className="border-b border-slate-100 px-4 py-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Created</div>
-            <div className="mt-1 text-sm text-slate-800">{item.created_at ? new Date(item.created_at).toLocaleString() : '-'}</div>
+            <div className="mt-1 text-sm text-slate-800">{formatDateTime(item.created_at)}</div>
           </div>
           <div className="border-b border-slate-100 px-4 py-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Last Updated</div>
-            <div className="mt-1 text-sm text-slate-800">{item.updated_at ? new Date(item.updated_at).toLocaleString() : '-'}</div>
+            <div className="mt-1 text-sm text-slate-800">{formatDateTime(item.updated_at)}</div>
           </div>
         </div>
+      </div>
+
+      <div className="erp-panel overflow-hidden">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-900">Recent Transaction History</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Receipts and future stock movements tied to this item.
+          </p>
+        </div>
+
+        {transactionError ? (
+          <div className="border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            Transaction history is unavailable. Supabase returned: {transactionError.message}. Apply
+            `docs/supabase-receiving.sql`, then reload this page.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Date</th>
+                  <th className="px-4 py-3">Type</th>
+                  <th className="px-4 py-3">Quantity</th>
+                  <th className="px-4 py-3">From</th>
+                  <th className="px-4 py-3">To</th>
+                  <th className="px-4 py-3">Reference</th>
+                  <th className="px-4 py-3">Performed By</th>
+                  <th className="px-4 py-3">Notes</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {transactions.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                      No inventory transactions found for this item.
+                    </td>
+                  </tr>
+                ) : (
+                  transactions.map((row) => (
+                    <tr key={row.id} className="border-b border-slate-100 align-top">
+                      <td className="px-4 py-3 text-slate-700">{formatDate(transactionDate(row))}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">
+                        {row.transaction_type}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{row.quantity}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.from_location || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.to_location || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.reference || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.performed_by || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.notes || '-'}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

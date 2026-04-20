@@ -11,15 +11,39 @@ export type InventoryOption = {
 
 export type ReceiveInventoryInput = {
   item_id: string;
+  part_number: string;
+  description: string;
   quantity: number;
   reference: string;
   notes: string;
-  performed_by: string;
+  is_supply: boolean;
+};
+
+export type ReceivingImportField =
+  | 'item_id'
+  | 'part_number'
+  | 'description'
+  | 'quantity'
+  | 'reference'
+  | 'performed_by'
+  | 'notes';
+
+export type ReceivingMatchType = 'item_id' | 'part_number' | 'unresolved';
+
+export type ReceivingImportInput = Omit<ReceiveInventoryInput, 'quantity'> & {
+  quantity: number | null;
+  source_row_number?: number;
+  invalid_reasons?: string[];
+  performed_by?: string;
+  match_type?: ReceivingMatchType;
+  target_item_id?: string;
+  target_part_number?: string | null;
+  target_description?: string | null;
 };
 
 export type InventoryTransaction = {
   id: string;
-  transaction_date: string;
+  transaction_date?: string | null;
   item_id: string;
   part_number: string | null;
   description: string | null;
