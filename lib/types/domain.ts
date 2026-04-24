@@ -1,9 +1,36 @@
-<<<<<<< HEAD
-export type UserRole = 'System Admin' | 'Operations Manager' | 'Warehouse' | 'Purchasing' | 'Viewer';
+export type UserRole =
+  | 'System Admin'
+  | 'Operations Manager'
+  | 'Warehouse'
+  | 'Purchasing'
+  | 'Viewer';
+
 export type Criticality = 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
 export type PriorityBand = 'ORDER NOW' | 'RISK' | 'REVIEW' | 'OK';
-export type SerialLifecycleStatus = 'Received' | 'In Stock' | 'Allocated' | 'In Build' | 'Staged' | 'Shipped' | 'Delivered' | 'Returned' | 'Scrapped';
-export type MovementType = 'RECEIPT' | 'ISSUE' | 'TRANSFER' | 'ADJUSTMENT' | 'CYCLE COUNT' | 'BUILD ISSUE' | 'BUILD COMPLETE' | 'SHIP' | 'RETURN' | 'SCRAP' | 'LOCATION MOVE';
+
+export type SerialLifecycleStatus =
+  | 'Received'
+  | 'In Stock'
+  | 'Allocated'
+  | 'In Build'
+  | 'Staged'
+  | 'Shipped'
+  | 'Delivered'
+  | 'Returned'
+  | 'Scrapped';
+
+export type MovementType =
+  | 'RECEIPT'
+  | 'ISSUE'
+  | 'TRANSFER'
+  | 'ADJUSTMENT'
+  | 'CYCLE COUNT'
+  | 'BUILD ISSUE'
+  | 'BUILD COMPLETE'
+  | 'SHIP'
+  | 'RETURN'
+  | 'SCRAP'
+  | 'LOCATION MOVE';
 
 export interface AppUser {
   id: string;
@@ -25,25 +52,17 @@ export interface AuditLogEntry {
   changedByName: string;
   changedAt: string;
 }
-=======
-export type Criticality = 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
-export type PriorityBand = 'ORDER NOW' | 'RISK' | 'REVIEW' | 'OK';
->>>>>>> origin/main
 
 export interface InventoryItem {
   id: string;
   itemId: string;
   itemName: string;
   description: string;
-<<<<<<< HEAD
   trackingType: 'SERIALIZED' | 'QUANTITY' | 'LOT';
   serialRequired: boolean;
   autoGenerateSerials: boolean;
   serialPrefixOverride?: string;
   nextSerialNumber: number;
-=======
-  trackingType: 'SERIAL' | 'LOT' | 'QTY';
->>>>>>> origin/main
   inventoryType: 'RAW' | 'WIP' | 'FG' | 'MRO';
   currentInventory: number;
   averageDailyUsage: number;
@@ -59,26 +78,17 @@ export interface InventoryTransaction {
   date: string;
   itemId: string;
   serialNumber: string;
-<<<<<<< HEAD
   movementType: MovementType;
-=======
-  transactionType: 'RECEIVED' | 'TRANSFER' | 'ISSUED' | 'ADJUSTMENT' | 'BUILT' | 'SHIPPED' | 'COUNT';
->>>>>>> origin/main
   quantity: number;
   fromLocation: string;
   toLocation: string;
   reference: string;
   workOrder: string;
-<<<<<<< HEAD
   notes: string;
   performedByUserId: string;
   performedByName: string;
   performedByRole: UserRole;
   performedAt: string;
-=======
-  employee: string;
-  notes: string;
->>>>>>> origin/main
 }
 
 export interface SerialTraceRecord {
@@ -88,27 +98,17 @@ export interface SerialTraceRecord {
   description: string;
   poNumber: string;
   project: string;
-<<<<<<< HEAD
   vendor: string;
   dateReceived: string;
   currentLocation: string;
   workOrder: string;
   shipmentId?: string;
-=======
-  dateReceived: string;
-  currentLocation: string;
-  workOrder: string;
->>>>>>> origin/main
   buildStatus: string;
   dateShipped?: string;
   trackingNumber?: string;
   customer: string;
-<<<<<<< HEAD
   status: SerialLifecycleStatus;
   notes: string;
-=======
-  status: 'OPEN' | 'IN_BUILD' | 'SHIPPED' | 'EXCEPTION';
->>>>>>> origin/main
 }
 
 export interface ProjectBuild {

@@ -36,6 +36,7 @@ const adminLinks: NavLink[] = [{ href: '/users', label: 'Users / Access', icon: 
 export function Sidebar({ isAdmin = false }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('sidebar-collapsed');
@@ -63,26 +64,52 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
           <>
             <Link href="/inventory" className="block w-full">
               <div className="flex flex-col items-center text-center">
-                <Image
-                  src="/denali-logo.png"
-                  alt="Denali Logistics SEA991"
-                  width={235}
-                  height={150}
-                  priority
-                  className="h-auto w-auto object-contain"
-                />
+                {!logoFailed ? (
+                  <Image
+                    src="/denali-logo.png"
+                    alt="Denali Logistics SEA991"
+                    width={235}
+                    height={120}
+                    priority
+                    className="h-auto w-auto object-contain"
+                    onError={() => setLogoFailed(true)}
+                  />
+                ) : (
+                  <div className="flex h-[120px] w-full items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 px-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold tracking-wide text-slate-900">
+                        DENALI
+                      </div>
+                      <div className="mt-2 text-base font-medium text-slate-600">
+                        Logistics SEA991
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-                <div className="-mt-1 text-[1rem] font-medium tracking-[0.03em] text-slate-800">
-                  Logistics SEA991
-                </div>
+                {!logoFailed ? (
+                  <>
+                    <div className="mt-2 text-[1rem] font-medium tracking-[0.03em] text-slate-800">
+                      Logistics SEA991
+                    </div>
 
-                <div className="mt-3 text-[0.82rem] text-slate-500">
-                  Powered by{' '}
-                  <span className="font-semibold tracking-[0.08em] text-slate-700">
-                    SCCT
-                  </span>
-                  <sup className="ml-0.5 text-[0.65em] align-super text-slate-500">TM</sup>
-                </div>
+                    <div className="mt-3 text-[0.82rem] text-slate-500">
+                      Powered by{' '}
+                      <span className="font-semibold tracking-[0.08em] text-slate-700">
+                        SCCT
+                      </span>
+                      <sup className="ml-0.5 text-[0.65em] align-super text-slate-500">TM</sup>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-3 text-[0.82rem] text-slate-500">
+                    Powered by{' '}
+                    <span className="font-semibold tracking-[0.08em] text-slate-700">
+                      SCCT
+                    </span>
+                    <sup className="ml-0.5 text-[0.65em] align-super text-slate-500">TM</sup>
+                  </div>
+                )}
 
                 <div className="mt-5 w-full border-t border-slate-300" />
               </div>
