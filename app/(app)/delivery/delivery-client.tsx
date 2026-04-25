@@ -1,1066 +1,857 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import * as XLSX from 'xlsx';
-import { DataTable } from '@/components/data-table';
 import { DELIVERY_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
-import type {
-  BomHeader,
-  DeliveryPageData,
-  DeliveryView,
-  HistoryRecord,
-  ManifestHeader,
-} from './types';
+import type { DeliveryPageData } from './types';
 
 const DEFAULT_SITE = 'SEA991';
 
-const DELIVERY_TABS: { view: DeliveryView; label: string; href: string }[] = [
-  { view: 'bom', label: 'BOM / Release', href: '/delivery?view=bom' },
-  { view: 'manifest', label: 'Manifest', href: '/delivery?view=manifest' },
-  { view: 'pickups', label: 'Pickups', href: '/delivery?view=pickups' },
-  { view: 'deliveries', label: 'Drop-Offs', href: '/delivery?view=deliveries' },
-  { view: 'history', label: 'History', href: '/delivery?view=history' },
-];
+const MANIFEST_START = 1501;
+const BOM_START = 13501;
 
-type MovementDirection = 'incoming' | 'outgoing';
+type Direction = 'incoming' | 'outgoing';
 
-type MovementDraft = {
+type StopRow = {
   id: string;
-  source: 'manual' | 'upload' | 'saved';
-  title: string;
-  direction: MovementDirection;
-  date: string | null;
-  time: string | null;
-  shipmentTransferId: string | null;
-  reference: string | null;
-  company: string | null;
-  location: string | null;
-  fromLocation: string | null;
-  toLocation: string | null;
-  contact: string | null;
-  items: string | null;
-  notes: string | null;
-  status: string | null;
-  href?: string | null;
-};
-
-type ManualFormState = {
+  manifestNumber: string;
+  direction: Direction;
   title: string;
   date: string;
   time: string;
   shipmentTransferId: string;
   reference: string;
-  company: string;
   fromLocation: string;
   toLocation: string;
   contact: string;
   items: string;
   notes: string;
+  status: string;
+  createdAt: string;
 };
 
-type DeliveryDraftPayload = {
-  direction?: 'pickup' | 'delivery' | 'incoming' | 'outgoing' | 'unknown';
-  company_name?: string;
-  pickup_location?: string;
-  dropoff_location?: string;
-  contact_name?: string;
-  contact_phone?: string;
-  contact_email?: string;
-  requested_date?: string;
-  requested_time?: string;
-  shipment_transfer_id?: string;
-  project_or_work_order?: string;
-  items?: string;
-  notes?: string;
+type BomDraft = {
+  bomNumber: string;
+  manifestNumber: string;
+  sourceStopId: string;
+  createdAt: string;
+  reference: string;
+  shipFrom: string;
+  shipTo: string;
+  contact: string;
+  items: string;
+  notes: string;
 };
 
-const EMPTY_FORM: ManualFormState = {
-  title: '',
-  date: new Date().toISOString().slice(0, 10),
-  time: '',
-  shipmentTransferId: '',
-  reference: '',
-  company: '',
-  fromLocation: '',
-  toLocation: DEFAULT_SITE,
-  contact: '',
-  items: '',
-  notes: '',
-};
-
-function formatDate(value: string | null) {
-  if (!value) return '-';
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString();
+function newId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function formatTime(value: string | null) {
-  if (!value) return '-';
-  return value.slice(0, 5);
+function formatType(direction: Direction) {
+  return direction === 'incoming' ? 'Pickup' : 'Drop-Off';
 }
 
-function directionLabel(direction: string | null) {
-  if (direction === 'incoming') return 'Pickup';
-  if (direction === 'outgoing') return 'Drop-Off';
-  return '-';
+function createManifestNumber(existingManifestNumbers: string[]) {
+  const used = existingManifestNumbers
+    .map((value) => Number(value.replace('DAI-M', '')))
+    .filter((value) => Number.isFinite(value));
+
+  const next = used.length ? Math.max(...used) + 1 : MANIFEST_START;
+  return `DAI-M${next}`;
 }
 
-function directionBadgeClass(direction: string | null) {
-  if (direction === 'incoming') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  if (direction === 'outgoing') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
-  return 'border-slate-200 bg-slate-50 text-slate-600';
+function createBomNumber(existingBomNumbers: string[]) {
+  const used = existingBomNumbers
+    .map((value) => Number(value.replace('DAI-B', '')))
+    .filter((value) => Number.isFinite(value));
+
+  const next = used.length ? Math.max(...used) + 1 : BOM_START;
+  return `DAI-B${next}`;
 }
 
-function sortDateTime(date: string | null, time: string | null) {
-  const value = `${date || '1970-01-01'}T${time || '00:00'}:00`;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
+async function loadManifestRows(): Promise<StopRow[]> {
+  const res = await fetch('/api/shipping/manifest-history', { cache: 'no-store' });
+  const data = await res.json();
+
+  if (!data.ok) throw new Error(data.message || 'Failed to load manifest history.');
+
+  return (data.rows || []).map((row: any) => ({
+    id: row.id,
+    manifestNumber: row.manifest_number || '',
+    direction: row.direction,
+    title: row.title,
+    date: row.stop_date || '',
+    time: row.stop_time || '',
+    shipmentTransferId: row.shipment_transfer_id || '',
+    reference: row.reference || '',
+    fromLocation: row.from_location || '',
+    toLocation: row.to_location || '',
+    contact: row.contact || '',
+    items: row.items || '',
+    notes: row.notes || '',
+    status: row.status || 'Draft',
+    createdAt: row.created_at || '',
+  }));
 }
 
-function normalizeText(value: string | null | undefined) {
-  return value?.trim() || '';
+async function loadBomRows(): Promise<BomDraft[]> {
+  const res = await fetch('/api/shipping/bom-history', { cache: 'no-store' });
+  const data = await res.json();
+
+  if (!data.ok) throw new Error(data.message || 'Failed to load BOM history.');
+
+  return (data.rows || []).map((row: any) => ({
+    bomNumber: row.bom_number,
+    manifestNumber: row.manifest_number || '',
+    sourceStopId: row.source_stop_id || '',
+    createdAt: row.created_at || '',
+    reference: row.reference || '',
+    shipFrom: row.ship_from || '',
+    shipTo: row.ship_to || '',
+    contact: row.contact || '',
+    items: row.items || '',
+    notes: row.notes || '',
+  }));
 }
 
-function toMovementDraft(manifest: ManifestHeader): MovementDraft {
-  const direction: MovementDirection = manifest.direction === 'incoming' ? 'incoming' : 'outgoing';
+async function saveManifestRow(row: StopRow) {
+  const res = await fetch('/api/shipping/manifest-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: row.id,
+      manifest_number: row.manifestNumber,
+      direction: row.direction,
+      title: row.title,
+      stop_date: row.date || null,
+      stop_time: row.time,
+      shipment_transfer_id: row.shipmentTransferId,
+      reference: row.reference,
+      from_location: row.fromLocation,
+      to_location: row.toLocation,
+      contact: row.contact,
+      items: row.items,
+      notes: row.notes,
+      status: row.status,
+    }),
+  });
 
-  return {
-    id: `saved-${manifest.id}`,
-    source: 'saved',
-    title: manifest.document_title || 'Material Movement',
-    direction,
-    date: manifest.manifest_date,
-    time: manifest.manifest_time,
-    shipmentTransferId: manifest.shipment_transfer_id || null,
-    reference: manifest.reference_project_work_order || null,
-    company: null,
-    location: null,
-    fromLocation: direction === 'outgoing' ? DEFAULT_SITE : null,
-    toLocation: direction === 'incoming' ? DEFAULT_SITE : null,
-    contact: null,
-    items: null,
-    notes: null,
-    status: manifest.status || 'Draft',
-    href: `/driver-manifest/${manifest.id}`,
-  };
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to save manifest stop.');
 }
 
-function normalizeCell(row: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const match = Object.keys(row).find(
-      (candidate) => candidate.trim().toLowerCase() === key.trim().toLowerCase()
-    );
+async function updateManifestRow(row: StopRow) {
+  const res = await fetch('/api/shipping/manifest-history', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: row.id,
+      manifest_number: row.manifestNumber,
+      direction: row.direction,
+      title: row.title,
+      stop_date: row.date || null,
+      stop_time: row.time,
+      shipment_transfer_id: row.shipmentTransferId,
+      reference: row.reference,
+      from_location: row.fromLocation,
+      to_location: row.toLocation,
+      contact: row.contact,
+      items: row.items,
+      notes: row.notes,
+      status: row.status,
+    }),
+  });
 
-    if (match) {
-      const value = row[match];
-      if (value === null || value === undefined) return '';
-      return String(value).trim();
-    }
-  }
-
-  return '';
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to update manifest stop.');
 }
 
-function parseUploadRows(rows: Record<string, unknown>[], direction: MovementDirection): MovementDraft[] {
-  return rows
-    .map((row, index) => {
-      const title =
-        normalizeCell(row, ['title', 'document title', 'job title', 'stop title']) ||
-        `${direction === 'incoming' ? 'Pickup' : 'Drop-Off'} ${index + 1}`;
+async function saveBomRow(bom: BomDraft) {
+  const res = await fetch('/api/shipping/bom-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bom_number: bom.bomNumber,
+      manifest_number: bom.manifestNumber,
+      source_stop_id: bom.sourceStopId,
+      reference: bom.reference,
+      ship_from: bom.shipFrom,
+      ship_to: bom.shipTo,
+      contact: bom.contact,
+      items: bom.items,
+      notes: bom.notes,
+    }),
+  });
 
-      const date = normalizeCell(row, [
-        'date',
-        'manifest date',
-        'scheduled date',
-        'pickup date',
-        'delivery date',
-      ]);
-      const time = normalizeCell(row, [
-        'time',
-        'manifest time',
-        'scheduled time',
-        'pickup time',
-        'delivery time',
-      ]);
-      const shipmentTransferId = normalizeCell(row, [
-        'shipment id',
-        'transfer id',
-        'shipment/transfer',
-        'shipment transfer id',
-      ]);
-      const reference = normalizeCell(row, [
-        'reference',
-        'project',
-        'project/work order',
-        'work order',
-        'job',
-      ]);
-      const company = normalizeCell(row, ['company', 'customer', 'vendor']);
-      const fromLocation =
-        normalizeCell(row, ['from', 'from location', 'pickup location', 'ship from']) ||
-        (direction === 'outgoing' ? DEFAULT_SITE : '');
-      const toLocation =
-        normalizeCell(row, ['to', 'to location', 'dropoff location', 'drop off location', 'ship to']) ||
-        (direction === 'incoming' ? DEFAULT_SITE : '');
-      const location = direction === 'incoming' ? fromLocation : toLocation;
-      const contact = normalizeCell(row, ['contact', 'contact name', 'recipient']);
-      const items = normalizeCell(row, ['items', 'parts', 'materials', 'description']);
-      const notes = normalizeCell(row, ['notes', 'comments', 'remarks']);
-      const status = normalizeCell(row, ['status']) || 'Imported';
-
-      return {
-        id: `upload-${direction}-${index}-${Math.random().toString(36).slice(2, 10)}`,
-        source: 'upload' as const,
-        title,
-        direction,
-        date: date || null,
-        time: time || null,
-        shipmentTransferId: shipmentTransferId || null,
-        reference: reference || null,
-        company: company || null,
-        location: location || null,
-        fromLocation: fromLocation || null,
-        toLocation: toLocation || null,
-        contact: contact || null,
-        items: items || null,
-        notes: notes || null,
-        status,
-        href: null,
-      };
-    })
-    .filter((row) => row.title || row.location || row.items || row.reference);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to save BOM.');
 }
 
-function SetupMessage({ message, title }: { message: string; title: string }) {
-  if (!message) return null;
+function printElementById(id: string) {
+  const element = document.getElementById(id);
+  if (!element) return;
 
-  return (
-    <section className="erp-card border-rose-200 bg-rose-50 p-5">
-      <h2 className="text-base font-semibold text-rose-800">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-rose-700">{message}</p>
-    </section>
-  );
+  const printWindow = window.open('', '_blank', 'width=900,height=700');
+  if (!printWindow) return;
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Print</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #0f172a; padding: 24px; }
+          h1, h2, h3 { margin: 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+          th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; font-size: 12px; }
+          th { background: #f1f5f9; text-transform: uppercase; font-size: 11px; }
+          .header { border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px; }
+          .meta { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
+          .box { border: 1px solid #cbd5e1; padding: 10px; margin-top: 12px; }
+          pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 13px; }
+        </style>
+      </head>
+      <body>${element.innerHTML}</body>
+    </html>
+  `);
+
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
 }
 
-function DeliveryTabs({ current }: { current: DeliveryView }) {
-  return (
-    <div className="erp-panel overflow-x-auto p-2">
-      <nav className="flex min-w-max gap-2" aria-label="Delivery views">
-        {DELIVERY_TABS.map((tab) => {
-          const active = tab.view === current;
-
-          return (
-            <Link
-              key={tab.view}
-              href={tab.href}
-              className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
-                active
-                  ? 'bg-cyan-700 text-white shadow-sm'
-                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {tab.label}
-            </Link>
-          );
-        })}
-      </nav>
-    </div>
-  );
-}
-
-function StatStrip({
-  bomCount,
-  manifestCount,
-  pickupCount,
-  deliveryCount,
+function StopModal({
+  row,
+  onClose,
+  onSave,
+  onCreateBom,
 }: {
-  bomCount: number;
-  manifestCount: number;
-  pickupCount: number;
-  deliveryCount: number;
+  row: StopRow | null;
+  onClose: () => void;
+  onSave: (row: StopRow) => void;
+  onCreateBom: (row: StopRow) => void;
 }) {
-  const stats = [
-    { label: 'BOM / Release', value: bomCount },
-    { label: 'Manifest Rows', value: manifestCount },
-    { label: 'Pickups', value: pickupCount },
-    { label: 'Drop-Offs', value: deliveryCount },
-  ];
+  const [draft, setDraft] = useState<StopRow | null>(row);
 
-  return (
-    <div className="grid gap-3 md:grid-cols-4">
-      {stats.map((stat) => (
-        <div key={stat.label} className="erp-panel p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {stat.label}
-          </div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{stat.value}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
+  useEffect(() => {
+    setDraft(row);
+  }, [row]);
 
-function BomReleaseView({ boms, setupError }: { boms: BomHeader[]; setupError: string }) {
-  if (setupError) {
-    return <SetupMessage title="BOM storage is not ready" message={setupError} />;
+  if (!draft) return null;
+
+  const isDropOff = draft.direction === 'outgoing';
+
+  function update(field: keyof StopRow, value: string) {
+    setDraft((current) => (current ? { ...current, [field]: value } : current));
   }
 
-  if (boms.length === 0) {
-    return (
-      <section className="erp-card p-8 text-center">
-        <h2 className="text-base font-semibold text-slate-800">No BOM releases yet</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">
-          Create the first BOM / Release record for saved review and print.
-        </p>
-        <div className="mt-5">
-          <Link
-            href="/bom/new"
+  function addBlankItemLine() {
+    update('items', draft.items.trim() ? `${draft.items.trim()}\n1x ` : '1x ');
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">
+              {formatType(draft.direction)} Details
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Manifest {draft.manifestNumber}. BOM creation is only available for drop-offs.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-slate-300 px-3 py-1 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <label className="text-sm font-semibold text-slate-700">
+            Manifest #
+            <input
+              value={draft.manifestNumber}
+              readOnly
+              className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            Title
+            <input
+              value={draft.title}
+              onChange={(event) => update('title', event.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            Date
+            <input
+              type="date"
+              value={draft.date}
+              onChange={(event) => update('date', event.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            Time / Window
+            <input
+              type="text"
+              value={draft.time}
+              onChange={(event) => update('time', event.target.value)}
+              placeholder="10:30-12:00"
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            PO / Shipment / Transfer ID
+            <input
+              value={draft.shipmentTransferId}
+              onChange={(event) => update('shipmentTransferId', event.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            Reference
+            <input
+              value={draft.reference}
+              onChange={(event) => update('reference', event.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            From
+            <input
+              value={draft.fromLocation}
+              onChange={(event) => update('fromLocation', event.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            To
+            <input
+              value={draft.toLocation}
+              onChange={(event) => update('toLocation', event.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700 md:col-span-2">
+            Contact / POC
+            <input
+              value={draft.contact}
+              onChange={(event) => update('contact', event.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <div className="md:col-span-2">
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-sm font-semibold text-slate-700">Items</label>
+              <button
+                type="button"
+                onClick={addBlankItemLine}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Add Item Line
+              </button>
+            </div>
+
+            <textarea
+              value={draft.items || ''}
+              onChange={(event) => update('items', event.target.value)}
+              className="mt-1 min-h-[140px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
+              spellCheck={false}
+            />
+          </div>
+
+          <label className="text-sm font-semibold text-slate-700 md:col-span-2">
+            Notes
+            <textarea
+              value={draft.notes || ''}
+              onChange={(event) => update('notes', event.target.value)}
+              className="mt-1 min-h-[110px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+        </div>
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => onSave(draft)}
             className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
           >
-            Create BOM / Release
-          </Link>
+            Save Changes
+          </button>
+
+          {isDropOff ? (
+            <button
+              type="button"
+              onClick={() => onCreateBom(draft)}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Create BOM
+            </button>
+          ) : null}
         </div>
-      </section>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <Link
-          href="/bom/new"
-          className="rounded-md bg-cyan-700 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
-        >
-          Create BOM / Release
-        </Link>
-      </div>
-
-      <div className="hidden md:block">
-        <DataTable>
-          <thead>
-            <tr>
-              <th>BOM #</th>
-              <th>Date</th>
-              <th>Status</th>
-              <th>Project / Job #</th>
-              <th>Requested By</th>
-            </tr>
-          </thead>
-          <tbody>
-            {boms.map((bom) => (
-              <tr key={bom.id}>
-                <td>
-                  <Link href={`/bom/${bom.id}`} className="font-semibold text-cyan-700 hover:underline">
-                    {bom.bom_number || '(Auto-numbered)'}
-                  </Link>
-                </td>
-                <td>{formatDate(bom.bom_date)}</td>
-                <td>{bom.status || 'Saved'}</td>
-                <td>{bom.project_job_number || '-'}</td>
-                <td>{bom.requested_by || '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </DataTable>
       </div>
     </div>
   );
 }
 
-function SectionToolbar({
-  title,
-  subtitle,
-  addLabel,
-  uploadLabel,
-  onAdd,
-  onUpload,
-}: {
-  title: string;
-  subtitle: string;
-  addLabel: string;
-  uploadLabel: string;
-  onAdd: () => void;
-  onUpload: () => void;
-}) {
+function PrintableBom({ bom }: { bom: BomDraft }) {
   return (
-    <div className="erp-panel flex flex-col gap-4 p-4 md:flex-row md:items-center md:justify-between">
-      <div>
-        <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-        <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onAdd}
-          className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
-        >
-          {addLabel}
-        </button>
-        <button
-          type="button"
-          onClick={onUpload}
-          className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          {uploadLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ManualEntryPanel({
-  open,
-  title,
-  direction,
-  form,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  open: boolean;
-  title: string;
-  direction: MovementDirection;
-  form: ManualFormState;
-  onChange: (field: keyof ManualFormState, value: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  if (!open) return null;
-
-  return (
-    <section className="erp-card border-cyan-200 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-          <p className="mt-1 text-sm text-slate-500">
-            Add a {direction === 'incoming' ? 'pickup' : 'drop-off'} stop manually.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          Cancel
-        </button>
+    <div id={`print-bom-${bom.bomNumber}`} className="hidden">
+      <div className="header">
+        <h1>BOM / Release</h1>
+        <p>BOM #: {bom.bomNumber}</p>
+        <p>Manifest #: {bom.manifestNumber}</p>
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <label className="text-sm font-medium text-slate-700">
-          Title
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.title}
-            onChange={(event) => onChange('title', event.target.value)}
-            placeholder={direction === 'incoming' ? 'Pickup stop title' : 'Drop-off stop title'}
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          Date
-          <input
-            type="date"
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.date}
-            onChange={(event) => onChange('date', event.target.value)}
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          Time
-          <input
-            type="time"
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.time}
-            onChange={(event) => onChange('time', event.target.value)}
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          Shipment / Transfer ID
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.shipmentTransferId}
-            onChange={(event) => onChange('shipmentTransferId', event.target.value)}
-            placeholder="Shipment or transfer ID"
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          Reference
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.reference}
-            onChange={(event) => onChange('reference', event.target.value)}
-            placeholder="Project, work order, or reference"
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          Company
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.company}
-            onChange={(event) => onChange('company', event.target.value)}
-            placeholder="Company / customer / vendor"
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          From
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.fromLocation}
-            onChange={(event) => onChange('fromLocation', event.target.value)}
-            placeholder={direction === 'incoming' ? 'Pickup from' : 'Ship from'}
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          To
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.toLocation}
-            onChange={(event) => onChange('toLocation', event.target.value)}
-            placeholder={`Default: ${DEFAULT_SITE}`}
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          Contact
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.contact}
-            onChange={(event) => onChange('contact', event.target.value)}
-            placeholder="Point of contact"
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700">
-          Items
-          <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.items}
-            onChange={(event) => onChange('items', event.target.value)}
-            placeholder="Crates, parts, servers, etc."
-          />
-        </label>
-
-        <label className="text-sm font-medium text-slate-700 md:col-span-2">
-          Notes
-          <textarea
-            className="mt-1 min-h-[100px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.notes}
-            onChange={(event) => onChange('notes', event.target.value)}
-            placeholder="Driver notes, release notes, receiving notes, route notes"
-          />
-        </label>
+      <div className="meta">
+        <div><strong>Created:</strong> {bom.createdAt}</div>
+        <div><strong>Reference:</strong> {bom.reference || '-'}</div>
+        <div><strong>Ship From:</strong> {bom.shipFrom || '-'}</div>
+        <div><strong>Ship To:</strong> {bom.shipTo || '-'}</div>
+        <div><strong>Contact / POC:</strong> {bom.contact || '-'}</div>
       </div>
 
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          onClick={onSave}
-          className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
-        >
-          Save {direction === 'incoming' ? 'Pickup' : 'Drop-Off'}
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function MovementTable({
-  rows,
-  emptyMessage,
-}: {
-  rows: MovementDraft[];
-  emptyMessage: string;
-}) {
-  if (rows.length === 0) {
-    return (
-      <section className="erp-card p-8 text-center">
-        <h2 className="text-base font-semibold text-slate-800">{emptyMessage}</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">
-          Use the add button or upload a file to populate this section.
-        </p>
-      </section>
-    );
-  }
-
-  return (
-    <div className="hidden md:block">
-      <DataTable>
+      <table>
         <thead>
           <tr>
-            <th>Type</th>
-            <th>Record</th>
-            <th>Date</th>
-            <th>Time</th>
-            <th>From</th>
-            <th>To</th>
-            <th>Company</th>
-            <th>Contact</th>
-            <th>Items</th>
-            <th>Status</th>
+            <th>Line</th>
+            <th>Item</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>
-                <span
-                  className={`rounded-md border px-2 py-1 text-xs font-semibold ${directionBadgeClass(
-                    row.direction
-                  )}`}
-                >
-                  {directionLabel(row.direction)}
-                </span>
-              </td>
-              <td>
-                {row.href ? (
-                  <Link href={row.href} className="font-semibold text-cyan-700 hover:underline">
-                    {row.title || '(Unnamed stop)'}
-                  </Link>
-                ) : (
-                  <span className="font-semibold text-slate-900">{row.title || '(Unnamed stop)'}</span>
-                )}
-              </td>
-              <td>{formatDate(row.date)}</td>
-              <td>{formatTime(row.time)}</td>
-              <td>{row.fromLocation || '-'}</td>
-              <td>{row.toLocation || '-'}</td>
-              <td>{row.company || '-'}</td>
-              <td>{row.contact || '-'}</td>
-              <td>{row.items || '-'}</td>
-              <td>{row.status || '-'}</td>
-            </tr>
-          ))}
+          {(bom.items || '')
+            .split('\n')
+            .filter(Boolean)
+            .map((item, index) => (
+              <tr key={`${bom.bomNumber}-${index}`}>
+                <td>{index + 1}</td>
+                <td>{item}</td>
+              </tr>
+            ))}
         </tbody>
-      </DataTable>
-    </div>
-  );
-}
+      </table>
 
-function ManifestMovementTable({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: MovementDraft[];
-}) {
-  return (
-    <div className="mt-5">
-      <div className="rounded-md bg-slate-900 px-4 py-3 text-sm font-bold uppercase tracking-wide text-white">
-        {title} ({rows.length})
+      <div className="box">
+        <strong>Notes</strong>
+        <pre>{bom.notes || '-'}</pre>
       </div>
 
-      {rows.length === 0 ? (
-        <div className="border-x border-b border-slate-200 px-4 py-6 text-sm text-slate-500">
-          No rows.
-        </div>
-      ) : (
-        <div className="overflow-x-auto border-x border-b border-slate-200">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-3 py-2">Time</th>
-                <th className="px-3 py-2">From</th>
-                <th className="px-3 py-2">To</th>
-                <th className="px-3 py-2">Company</th>
-                <th className="px-3 py-2">Contact</th>
-                <th className="px-3 py-2">Items</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2">{formatTime(row.time)}</td>
-                  <td className="px-3 py-2 font-semibold text-slate-800">{row.fromLocation || '-'}</td>
-                  <td className="px-3 py-2 font-semibold text-slate-800">{row.toLocation || '-'}</td>
-                  <td className="px-3 py-2">{row.company || '-'}</td>
-                  <td className="px-3 py-2">{row.contact || '-'}</td>
-                  <td className="px-3 py-2">{row.items || '-'}</td>
-                  <td className="px-3 py-2">{row.status || '-'}</td>
-                  <td className="px-3 py-2">{row.notes || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="box">
+        <strong>Signatures</strong>
+        <p>Authorized for Release: __________________________ Date: __________</p>
+        <p>Released To: __________________________ Signature: __________</p>
+      </div>
     </div>
   );
 }
 
-function ManifestView({
-  rows,
-  selectedDate,
-  onSelectedDateChange,
-}: {
-  rows: MovementDraft[];
-  selectedDate: string;
-  onSelectedDateChange: (value: string) => void;
-}) {
-  const dropoffs = rows
-    .filter((row) => row.direction === 'outgoing')
-    .sort((a, b) => sortDateTime(a.date, a.time) - sortDateTime(b.date, b.time));
+export function DeliveryClient(_props: DeliveryPageData) {
+  const [rows, setRows] = useState<StopRow[]>([]);
+  const [selectedRow, setSelectedRow] = useState<StopRow | null>(null);
+  const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
+  const [currentManifestNumber, setCurrentManifestNumber] = useState('');
+  const [message, setMessage] = useState('');
 
-  const pickups = rows
-    .filter((row) => row.direction === 'incoming')
-    .sort((a, b) => sortDateTime(a.date, a.time) - sortDateTime(b.date, b.time));
+  async function refreshData() {
+    const manifestRows = await loadManifestRows();
+    const bomRows = await loadBomRows();
+
+    setRows(manifestRows);
+    setBomDrafts(bomRows);
+
+    const nextManifestNumber = createManifestNumber(
+      manifestRows.map((row) => row.manifestNumber).filter(Boolean)
+    );
+
+    setCurrentManifestNumber(nextManifestNumber);
+  }
+
+  useEffect(() => {
+    async function init() {
+      try {
+        const manifestRows = await loadManifestRows();
+        const bomRows = await loadBomRows();
+
+        const rawDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
+        const manifestNumber = createManifestNumber(
+          manifestRows.map((row) => row.manifestNumber).filter(Boolean)
+        );
+
+        setCurrentManifestNumber(manifestNumber);
+
+        if (rawDraft) {
+          const draft = JSON.parse(rawDraft);
+          const isPickup = draft.direction === 'pickup' || draft.direction === 'incoming';
+          const isDropOff = !isPickup;
+
+          const row: StopRow = {
+            id: newId('intake'),
+            manifestNumber,
+            direction: isPickup ? 'incoming' : 'outgoing',
+            title: isPickup ? 'Pickup' : 'Drop-Off',
+            date: draft.requested_date || new Date().toISOString().slice(0, 10),
+            time: draft.requested_time || '',
+            shipmentTransferId: draft.shipment_transfer_id || '',
+            reference: draft.project_or_work_order || '',
+            fromLocation: draft.pickup_location || (isDropOff ? DEFAULT_SITE : ''),
+            toLocation: draft.dropoff_location || (isPickup ? DEFAULT_SITE : ''),
+            contact: draft.contact_name || '',
+            items: draft.items || '',
+            notes: draft.notes || '',
+            status: 'Draft',
+            createdAt: new Date().toISOString(),
+          };
+
+          await saveManifestRow(row);
+          window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
+          setMessage(`Transaction recorded under manifest ${manifestNumber}.`);
+
+          const nextRows = await loadManifestRows();
+          setRows(nextRows);
+        } else {
+          setRows(manifestRows);
+        }
+
+        setBomDrafts(bomRows);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'Shipping data failed to load.');
+      }
+    }
+
+    init();
+  }, []);
+
+  const groupedManifests = useMemo(() => {
+    const groups = new Map<string, StopRow[]>();
+
+    for (const row of rows) {
+      const manifestNumber = row.manifestNumber || 'Unassigned';
+      const current = groups.get(manifestNumber) || [];
+      current.push(row);
+      groups.set(manifestNumber, current);
+    }
+
+    return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [rows]);
+
+  function rowsForCurrentManifest() {
+    return rows.filter((row) => row.manifestNumber === currentManifestNumber);
+  }
+
+  const currentRows = rowsForCurrentManifest();
+  const pickups = currentRows.filter((row) => row.direction === 'incoming');
+  const dropOffs = currentRows.filter((row) => row.direction === 'outgoing');
+
+  async function addPickup() {
+    try {
+      const row: StopRow = {
+        id: newId('pickup'),
+        manifestNumber: currentManifestNumber,
+        direction: 'incoming',
+        title: 'Pickup',
+        date: new Date().toISOString().slice(0, 10),
+        time: '',
+        shipmentTransferId: '',
+        reference: '',
+        fromLocation: '',
+        toLocation: DEFAULT_SITE,
+        contact: '',
+        items: '',
+        notes: '',
+        status: 'Manual',
+        createdAt: new Date().toISOString(),
+      };
+
+      await saveManifestRow(row);
+      await refreshData();
+      setMessage(`Pickup recorded under manifest ${currentManifestNumber}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Pickup save failed.');
+    }
+  }
+
+  async function addDropOff() {
+    try {
+      const row: StopRow = {
+        id: newId('dropoff'),
+        manifestNumber: currentManifestNumber,
+        direction: 'outgoing',
+        title: 'Drop-Off',
+        date: new Date().toISOString().slice(0, 10),
+        time: '',
+        shipmentTransferId: '',
+        reference: '',
+        fromLocation: DEFAULT_SITE,
+        toLocation: '',
+        contact: '',
+        items: '',
+        notes: '',
+        status: 'Manual',
+        createdAt: new Date().toISOString(),
+      };
+
+      await saveManifestRow(row);
+      await refreshData();
+      setMessage(`Drop-off recorded under manifest ${currentManifestNumber}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Drop-off save failed.');
+    }
+  }
+
+  async function saveRow(updated: StopRow) {
+    try {
+      await updateManifestRow(updated);
+      await refreshData();
+      setSelectedRow(null);
+      setMessage(`Transaction updated under manifest ${updated.manifestNumber}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Transaction update failed.');
+    }
+  }
+
+  async function createBomFromDropOff(row: StopRow) {
+    try {
+      if (row.direction !== 'outgoing') return;
+
+      const bom: BomDraft = {
+        bomNumber: createBomNumber(bomDrafts.map((existing) => existing.bomNumber)),
+        manifestNumber: row.manifestNumber,
+        sourceStopId: row.id,
+        createdAt: new Date().toISOString(),
+        reference: row.shipmentTransferId || row.reference,
+        shipFrom: row.fromLocation,
+        shipTo: row.toLocation,
+        contact: row.contact,
+        items: row.items,
+        notes: row.notes,
+      };
+
+      await saveBomRow(bom);
+      await refreshData();
+      setSelectedRow(null);
+      setMessage(`BOM ${bom.bomNumber} recorded under manifest ${row.manifestNumber}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'BOM save failed.');
+    }
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="erp-panel flex flex-col gap-4 p-4 md:flex-row md:items-end md:justify-between">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Daily Manifest</h2>
+          <h2 className="text-xl font-bold text-slate-900">Daily Manifest</h2>
           <p className="text-sm text-slate-500">
-            Shows pickup/drop-off counts, from/to locations, items, contacts, and notes.
+            Current manifest: <span className="font-semibold">{currentManifestNumber || '-'}</span>
           </p>
         </div>
 
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="text-sm font-medium text-slate-700">
-            Manifest Date
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(event) => onSelectedDateChange(event.target.value)}
-              className="mt-1 block rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={addPickup}
+            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+          >
+            Add Pickup
+          </button>
+
+          <button
+            type="button"
+            onClick={addDropOff}
+            className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
+          >
+            Add Drop-Off
+          </button>
 
           <button
             type="button"
             onClick={() => window.print()}
-            className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             Print Manifest
           </button>
         </div>
       </div>
 
-      <section className="erp-card p-6 print:shadow-none">
-        <div className="border-b border-slate-200 pb-4">
-          <h1 className="text-2xl font-bold text-slate-900">Driver Daily Manifest</h1>
-          <p className="mt-1 text-sm text-slate-500">Date: {formatDate(selectedDate)}</p>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <div className="text-xs font-semibold uppercase text-slate-500">Total Stops</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{rows.length}</div>
-            </div>
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
-              <div className="text-xs font-semibold uppercase text-emerald-700">Pickups</div>
-              <div className="mt-1 text-2xl font-bold text-emerald-800">{pickups.length}</div>
-            </div>
-            <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3">
-              <div className="text-xs font-semibold uppercase text-cyan-700">Drop-Offs</div>
-              <div className="mt-1 text-2xl font-bold text-cyan-800">{dropoffs.length}</div>
-            </div>
-          </div>
-        </div>
-
-        <ManifestMovementTable title="Pickups" rows={pickups} />
-        <ManifestMovementTable title="Drop-Offs" rows={dropoffs} />
-      </section>
-    </div>
-  );
-}
-
-function HistoryView({
-  records,
-  movementRows,
-  bomError,
-  manifestError,
-}: {
-  records: HistoryRecord[];
-  movementRows: MovementDraft[];
-  bomError: string;
-  manifestError: string;
-}) {
-  const sortedMovements = [...movementRows].sort(
-    (a, b) => sortDateTime(b.date, b.time) - sortDateTime(a.date, a.time)
-  );
-
-  return (
-    <div className="space-y-4">
-      {bomError || manifestError ? (
-        <div className="space-y-3">
-          <SetupMessage title="BOM storage is not ready" message={bomError} />
-          <SetupMessage title="Manifest storage is not ready" message={manifestError} />
+      {message ? (
+        <div className="rounded-md border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800 print:hidden">
+          {message}
         </div>
       ) : null}
 
-      <section className="erp-panel p-4">
-        <h2 className="text-base font-semibold text-slate-900">Movement History</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Daily pickup and drop-off activity, including saved manifests plus manual and uploaded working rows.
-        </p>
-      </section>
-
-      {sortedMovements.length === 0 ? (
-        <section className="erp-card p-8 text-center">
-          <h2 className="text-base font-semibold text-slate-800">No movement history yet</h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">
-            Pickup and drop-off activity will appear here once records are added or imported.
-          </p>
-        </section>
-      ) : (
-        <MovementTable rows={sortedMovements} emptyMessage="No movement history yet" />
-      )}
-
-      {records.length > 0 ? (
-        <section className="erp-card p-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Saved document history
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h3 className="text-base font-bold text-slate-900">
+            Manifest {currentManifestNumber || '-'}
           </h3>
-          <p className="mt-1 text-sm text-slate-500">
-            BOM / Release and manifest documents currently stored in the system.
+          <p className="text-sm text-slate-500">
+            Pickups: {pickups.length} | Drop-Offs: {dropOffs.length}
           </p>
-        </section>
-      ) : null}
-    </div>
-  );
-}
+        </div>
 
-export function DeliveryClient({
-  view,
-  boms,
-  manifests,
-  history,
-  bomError,
-  manifestError,
-}: DeliveryPageData) {
-  const [manualRows, setManualRows] = useState<MovementDraft[]>([]);
-  const [showPickupForm, setShowPickupForm] = useState(false);
-  const [showDeliveryForm, setShowDeliveryForm] = useState(false);
-  const [pickupForm, setPickupForm] = useState<ManualFormState>(EMPTY_FORM);
-  const [deliveryForm, setDeliveryForm] = useState<ManualFormState>({
-    ...EMPTY_FORM,
-    fromLocation: DEFAULT_SITE,
-    toLocation: '',
-  });
-  const [uploadMessage, setUploadMessage] = useState('');
-  const [selectedManifestDate, setSelectedManifestDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  );
+        {currentRows.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-500">No stops recorded yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Manifest #</th>
+                  <th className="px-4 py-3">Type</th>
+                  <th className="px-4 py-3">Record</th>
+                  <th className="px-4 py-3">Date</th>
+                  <th className="px-4 py-3">Time / Window</th>
+                  <th className="px-4 py-3">From</th>
+                  <th className="px-4 py-3">To</th>
+                  <th className="px-4 py-3">PO / Shipment</th>
+                  <th className="px-4 py-3">Contact</th>
+                  <th className="px-4 py-3">Items</th>
+                </tr>
+              </thead>
 
-  useEffect(() => {
-    try {
-      const rawDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
+              <tbody>
+                {currentRows.map((row) => (
+                  <tr
+                    key={row.id}
+                    onClick={() => setSelectedRow(row)}
+                    className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
+                  >
+                    <td className="px-4 py-3 font-semibold">{row.manifestNumber}</td>
+                    <td className="px-4 py-3 font-semibold">{formatType(row.direction)}</td>
+                    <td className="px-4 py-3 font-semibold text-cyan-700">{row.title}</td>
+                    <td className="px-4 py-3">{row.date || '-'}</td>
+                    <td className="px-4 py-3">{row.time || '-'}</td>
+                    <td className="px-4 py-3">{row.fromLocation || '-'}</td>
+                    <td className="px-4 py-3">{row.toLocation || '-'}</td>
+                    <td className="px-4 py-3">{row.shipmentTransferId || '-'}</td>
+                    <td className="px-4 py-3">{row.contact || '-'}</td>
+                    <td className="whitespace-pre-line px-4 py-3 font-mono">{row.items || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
-      if (!rawDraft) return;
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+        <h3 className="text-base font-bold text-slate-900">Manifest History</h3>
 
-      const draft = JSON.parse(rawDraft) as DeliveryDraftPayload;
-      const isDelivery = draft.direction === 'delivery' || draft.direction === 'outgoing';
-      const fromLocation = isDelivery
-        ? normalizeText(draft.pickup_location) || DEFAULT_SITE
-        : normalizeText(draft.pickup_location);
-      const toLocation = isDelivery
-        ? normalizeText(draft.dropoff_location)
-        : normalizeText(draft.dropoff_location) || DEFAULT_SITE;
+        {groupedManifests.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-500">No manifests recorded yet.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {groupedManifests.map(([manifestNumber, manifestRows]) => {
+              const manifestPickups = manifestRows.filter((row) => row.direction === 'incoming');
+              const manifestDropOffs = manifestRows.filter((row) => row.direction === 'outgoing');
 
-      const newRow: MovementDraft = {
-        id: `ai-delivery-${Date.now()}`,
-        source: 'upload',
-        title: draft.items || (isDelivery ? 'AI Intake Drop-Off' : 'AI Intake Pickup'),
-        direction: isDelivery ? 'outgoing' : 'incoming',
-        date: draft.requested_date || new Date().toISOString().slice(0, 10),
-        time: draft.requested_time || null,
-        shipmentTransferId: draft.shipment_transfer_id || null,
-        reference: draft.project_or_work_order || null,
-        company: draft.company_name || null,
-        location: isDelivery ? toLocation || null : fromLocation || null,
-        fromLocation: fromLocation || null,
-        toLocation: toLocation || null,
-        contact: draft.contact_name || draft.contact_email || null,
-        items: draft.items || null,
-        notes: draft.notes || 'Generated from AI Intake.',
-        status: 'AI Draft',
-        href: null,
-      };
+              return (
+                <div key={manifestNumber} className="rounded-lg border border-slate-200 p-4">
+                  <div className="font-bold text-slate-900">{manifestNumber}</div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Pickups: {manifestPickups.length} | Drop-Offs: {manifestDropOffs.length}
+                  </div>
 
-      setManualRows((current) => [newRow, ...current]);
-      setUploadMessage('AI Intake draft added to the working manifest.');
-      window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
-    } catch (error) {
-      console.error('Failed to load AI delivery draft:', error);
-      setUploadMessage('AI Intake draft could not be loaded.');
-    }
-  }, []);
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2">Type</th>
+                          <th className="px-3 py-2">From</th>
+                          <th className="px-3 py-2">To</th>
+                          <th className="px-3 py-2">Items</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {manifestRows.map((row) => (
+                          <tr
+                            key={`history-${row.id}`}
+                            onClick={() => setSelectedRow(row)}
+                            className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
+                          >
+                            <td className="px-3 py-2">{formatType(row.direction)}</td>
+                            <td className="px-3 py-2">{row.fromLocation || '-'}</td>
+                            <td className="px-3 py-2">{row.toLocation || '-'}</td>
+                            <td className="whitespace-pre-line px-3 py-2 font-mono">
+                              {row.items || '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
-  const savedRows = useMemo(() => manifests.map(toMovementDraft), [manifests]);
-  const allRows = useMemo(
-    () =>
-      [...savedRows, ...manualRows].sort(
-        (a, b) => sortDateTime(a.date, a.time) - sortDateTime(b.date, b.time)
-      ),
-    [savedRows, manualRows]
-  );
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+        <h3 className="text-base font-bold text-slate-900">BOM History</h3>
 
-  const pickupRows = useMemo(
-    () => allRows.filter((row) => row.direction === 'incoming'),
-    [allRows]
-  );
+        {bomDrafts.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-500">No BOMs recorded yet.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {bomDrafts.map((bom) => (
+              <div key={bom.bomNumber} className="rounded-lg border border-slate-200 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="font-bold text-slate-900">{bom.bomNumber}</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Manifest: {bom.manifestNumber || '-'}
+                    </div>
+                    <div className="text-sm text-slate-600">
+                      Reference: {bom.reference || '-'}
+                    </div>
+                    <div className="text-sm text-slate-600">From: {bom.shipFrom || '-'}</div>
+                    <div className="text-sm text-slate-600">Ship To: {bom.shipTo || '-'}</div>
+                    <div className="text-sm text-slate-600">Contact: {bom.contact || '-'}</div>
+                    <div className="text-sm text-slate-600">Created: {bom.createdAt}</div>
+                  </div>
 
-  const dropoffRows = useMemo(
-    () => allRows.filter((row) => row.direction === 'outgoing'),
-    [allRows]
-  );
+                  <button
+                    type="button"
+                    onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
+                    className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                  >
+                    Print BOM
+                  </button>
+                </div>
 
-  const manifestRows = useMemo(
-    () =>
-      allRows.filter((row) => {
-        if (!selectedManifestDate) return true;
-        return row.date === selectedManifestDate;
-      }),
-    [allRows, selectedManifestDate]
-  );
+                <pre className="mt-3 whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm text-slate-800">
+                  {bom.items || 'No items entered.'}
+                </pre>
 
-  function updatePickupForm(field: keyof ManualFormState, value: string) {
-    setPickupForm((current) => ({ ...current, [field]: value }));
-  }
+                <PrintableBom bom={bom} />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
-  function updateDeliveryForm(field: keyof ManualFormState, value: string) {
-    setDeliveryForm((current) => ({ ...current, [field]: value }));
-  }
-
-  function buildManualRow(direction: MovementDirection, form: ManualFormState): MovementDraft {
-    const fromLocation =
-      normalizeText(form.fromLocation) || (direction === 'outgoing' ? DEFAULT_SITE : null);
-    const toLocation =
-      normalizeText(form.toLocation) || (direction === 'incoming' ? DEFAULT_SITE : null);
-
-    return {
-      id: `manual-${direction}-${Math.random().toString(36).slice(2, 10)}`,
-      source: 'manual',
-      title: form.title || (direction === 'incoming' ? 'Manual Pickup' : 'Manual Drop-Off'),
-      direction,
-      date: form.date || null,
-      time: form.time || null,
-      shipmentTransferId: form.shipmentTransferId || null,
-      reference: form.reference || null,
-      company: form.company || null,
-      location: direction === 'incoming' ? fromLocation : toLocation,
-      fromLocation,
-      toLocation,
-      contact: form.contact || null,
-      items: form.items || null,
-      notes: form.notes || null,
-      status: 'Manual',
-      href: null,
-    };
-  }
-
-  function savePickup() {
-    setManualRows((current) => [...current, buildManualRow('incoming', pickupForm)]);
-    setShowPickupForm(false);
-    setPickupForm(EMPTY_FORM);
-    setUploadMessage('Pickup added to today’s working manifest.');
-  }
-
-  function saveDelivery() {
-    setManualRows((current) => [...current, buildManualRow('outgoing', deliveryForm)]);
-    setShowDeliveryForm(false);
-    setDeliveryForm({
-      ...EMPTY_FORM,
-      fromLocation: DEFAULT_SITE,
-      toLocation: '',
-    });
-    setUploadMessage('Drop-off added to today’s working manifest.');
-  }
-
-  return (
-    <div className="space-y-4">
-      <StatStrip
-        bomCount={boms.length}
-        manifestCount={manifestRows.length}
-        pickupCount={pickupRows.length}
-        deliveryCount={dropoffRows.length}
+      <StopModal
+        row={selectedRow}
+        onClose={() => setSelectedRow(null)}
+        onSave={saveRow}
+        onCreateBom={createBomFromDropOff}
       />
-
-      <DeliveryTabs current={view} />
-
-      {uploadMessage ? (
-        <div className="erp-panel border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800">
-          {uploadMessage}
-        </div>
-      ) : null}
-
-      {view === 'bom' ? <BomReleaseView boms={boms} setupError={bomError} /> : null}
-
-      {view === 'manifest' ? (
-        <ManifestView
-          rows={manifestRows}
-          selectedDate={selectedManifestDate}
-          onSelectedDateChange={setSelectedManifestDate}
-        />
-      ) : null}
-
-      {view === 'pickups' ? (
-        <div className="space-y-4">
-          <SectionToolbar
-            title="Pickups"
-            subtitle="Manual pickup entry for daily route planning."
-            addLabel="Add Pickup"
-            uploadLabel="Upload"
-            onAdd={() => setShowPickupForm((current) => !current)}
-            onUpload={() => setUploadMessage('Use AI Document Intake for screenshots, PDFs, and emails.')}
-          />
-
-          <ManualEntryPanel
-            open={showPickupForm}
-            title="Add Pickup"
-            direction="incoming"
-            form={pickupForm}
-            onChange={updatePickupForm}
-            onCancel={() => setShowPickupForm(false)}
-            onSave={savePickup}
-          />
-
-          <MovementTable rows={pickupRows} emptyMessage="No pickups yet" />
-        </div>
-      ) : null}
-
-      {view === 'deliveries' ? (
-        <div className="space-y-4">
-          <SectionToolbar
-            title="Drop-Offs"
-            subtitle="Manual drop-off entry for daily route planning."
-            addLabel="Add Drop-Off"
-            uploadLabel="Upload"
-            onAdd={() => setShowDeliveryForm((current) => !current)}
-            onUpload={() => setUploadMessage('Use AI Document Intake for screenshots, PDFs, and emails.')}
-          />
-
-          <ManualEntryPanel
-            open={showDeliveryForm}
-            title="Add Drop-Off"
-            direction="outgoing"
-            form={deliveryForm}
-            onChange={updateDeliveryForm}
-            onCancel={() => setShowDeliveryForm(false)}
-            onSave={saveDelivery}
-          />
-
-          <MovementTable rows={dropoffRows} emptyMessage="No drop-offs yet" />
-        </div>
-      ) : null}
-
-      {view === 'history' ? (
-        <HistoryView
-          records={history}
-          movementRows={allRows}
-          bomError={bomError}
-          manifestError={manifestError}
-        />
-      ) : null}
     </div>
   );
 }
+
+export default DeliveryClient;

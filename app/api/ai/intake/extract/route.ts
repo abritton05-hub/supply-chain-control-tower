@@ -4,83 +4,135 @@ export const runtime = 'nodejs';
 
 type Workflow = 'receiving' | 'pull_request' | 'delivery';
 
+type ExtractedLineItem = {
+  part_number: string;
+  description: string;
+  qty: number;
+  uom: string;
+};
+
 function clean(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeLocation(value: string) {
+  const cleaned = value
+    .trim()
+    .replace(/[.,;:)]+$/, '')
+    .replace(/^the\s+/i, '')
+    .toUpperCase();
+
+  if (cleaned === 'WAREHOUSE') return 'WH';
+  if (cleaned === 'WH') return 'WH';
+
+  return cleaned;
 }
 
 function extractEmail(text: string) {
   return text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || '';
 }
 
-function extractContactName(text: string) {
+function extractPocName(text: string) {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const emailIndex = lines.findIndex((line) =>
-    /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(line)
-  );
+  const explicitPocLine = lines.find((line) => /\b(poc|point of contact|contact)\b/i.test(line));
 
-  if (emailIndex > 0) return lines[emailIndex - 1];
+  if (!explicitPocLine) return '';
 
-  const thanksMatch = text.match(/thanks,?\s+([a-z][a-z\s.'-]+)/i);
-  return thanksMatch?.[1]?.trim() || '';
+  const afterLabel = explicitPocLine
+    .replace(/^.*?\b(?:poc|point of contact|contact)\b\s*[:\-]?\s*/i, '')
+    .replace(/[<({].*$/, '')
+    .replace(/\b(please|schedule|pickup|pick up|deliver|delivery).*$/i, '')
+    .trim();
+
+  const nameMatch = afterLabel.match(/^@?([a-z]+(?:\s+[a-z]+){0,2})/i);
+  return nameMatch?.[1]?.trim() || '';
 }
 
 function extractLocations(text: string) {
   const lower = text.toLowerCase();
 
-  const pickupMatch =
-    text.match(/pickup\s+from\s+([a-z0-9-]+)/i) ||
-    text.match(/pick\s+up\s+from\s+([a-z0-9-]+)/i) ||
-    text.match(/\bfrom\s+([a-z0-9-]+)/i);
+  const fromLocation =
+    text.match(/pick\s*up\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
+    text.match(/pickup\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
+    text.match(/\bfrom\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
+    '';
 
-  const directToMatch = text.match(/directly\s+to\s+([a-z0-9-]+)/i);
-  const allToMatches = Array.from(text.matchAll(/\bto\s+([a-z0-9-]+)/gi));
-
-  const pickupLocation = pickupMatch?.[1]?.toUpperCase() || '';
-  const dropoffLocation =
-    directToMatch?.[1]?.toUpperCase() ||
-    allToMatches.at(-1)?.[1]?.toUpperCase() ||
+  const toLocation =
+    text.match(/taken\s+directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
+    text.match(/directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
+    text.match(/deliver\s+to\s+([a-z0-9-]+)/i)?.[1] ||
+    text.match(/\bto\s+([a-z0-9-]+)/i)?.[1] ||
     '';
 
   const isPickup =
     lower.includes('pickup') ||
     lower.includes('pick up') ||
-    Boolean(pickupLocation && dropoffLocation);
+    Boolean(fromLocation && toLocation);
+
+  const pickupLocation = fromLocation ? normalizeLocation(fromLocation) : 'WH';
+  const dropoffLocation = toLocation ? normalizeLocation(toLocation) : 'SEA991';
 
   return {
     direction: isPickup ? 'incoming' : 'outgoing',
     pickup_location: pickupLocation,
-    dropoff_location: dropoffLocation || (isPickup ? 'SEA991' : ''),
+    dropoff_location: dropoffLocation,
   };
 }
 
-function extractQuantity(text: string) {
-  const match =
-    text.match(/\bqty\s*(\d+)/i) ||
-    text.match(/\bquantity\s*(\d+)/i) ||
-    text.match(/\b(\d+)\s+of\b/i);
+function extractRequestedTime(text: string, pickupLocation: string) {
+  const rangeMatch = text.match(
+    /\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:-|–|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/i
+  );
 
-  return match ? Number(match[1]) : 1;
-}
-
-function extractItem(text: string) {
-  const match =
-    text.match(/qty\s*\d+\s+of\s+(.+)/i) ||
-    text.match(/quantity\s*\d+\s+of\s+(.+)/i);
-
-  const line = match?.[1]?.trim() || '';
-  if (!line) {
-    return {
-      part_number: '',
-      description: '',
-    };
+  if (rangeMatch?.[1] && rangeMatch?.[2]) {
+    return `${rangeMatch[1].trim()}-${rangeMatch[2].trim()}`;
   }
 
-  const [partNumber, ...descriptionParts] = line.split(/\s+/);
+  const singleTimeMatch = text.match(/\b(\d{1,2}:\d{2}\s*(?:am|pm)?)\b/i);
+  if (singleTimeMatch?.[1]) return singleTimeMatch[1].trim();
 
-  return {
-    part_number: partNumber.replace(/[,.]$/, ''),
-    description: descriptionParts.join(' ').trim(),
-  };
+  if (pickupLocation === 'WH') return '2:00 PM';
+
+  return '10:30 AM-12:00 PM';
+}
+
+function extractPoNumber(text: string) {
+  return (
+    text.match(/\bPO\s*#?\s*([A-Z0-9-]+)/i)?.[1]?.toUpperCase() ||
+    text.match(/\b(B\d{3,}-\d{4,})\b/i)?.[1]?.toUpperCase() ||
+    ''
+  );
+}
+
+function extractLineItems(text: string): ExtractedLineItem[] {
+  const items: ExtractedLineItem[] = [];
+  const seen = new Set<string>();
+
+  const patterns = [
+    /\bqty\s*(\d+)\s+(?:of\s+)?(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
+    /\b(\d+)\s*(?:pcs|pc|pieces|piece|ea|each|x)\s+(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of Array.from(text.matchAll(pattern))) {
+      const qty = Number(match[1]) || 1;
+      const partNumber = match[2].replace(/[,.]$/, '').toUpperCase();
+      const description = (match[3] || '').trim();
+      const key = `${qty}-${partNumber}-${description}`;
+
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      items.push({
+        qty,
+        part_number: partNumber,
+        description,
+        uom: 'EA',
+      });
+    }
+  }
+
+  return items;
 }
 
 export async function POST(request: Request) {
@@ -96,10 +148,7 @@ export async function POST(request: Request) {
     const rawText = clean(body.raw_text);
 
     if (!documentId) {
-      return NextResponse.json(
-        { ok: false, message: 'document_id is required.' },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, message: 'document_id is required.' }, { status: 400 });
     }
 
     if (workflow !== 'delivery') {
@@ -118,8 +167,8 @@ export async function POST(request: Request) {
     }
 
     const locations = extractLocations(rawText);
-    const item = extractItem(rawText);
-    const quantity = extractQuantity(rawText);
+    const lineItems = extractLineItems(rawText);
+    const poNumber = extractPoNumber(rawText);
 
     return NextResponse.json({
       ok: true,
@@ -127,42 +176,28 @@ export async function POST(request: Request) {
         workflow: 'delivery',
         header: {
           direction: locations.direction,
-          company_name: rawText.toLowerCase().includes('amazon') ? 'Amazon' : '',
+          company_name: '',
           pickup_location: locations.pickup_location,
           dropoff_location: locations.dropoff_location,
-          contact_name: extractContactName(rawText),
+          contact_name: extractPocName(rawText),
           contact_email: extractEmail(rawText),
           requested_date: '',
-          requested_time: '',
-          shipment_transfer_id: documentId,
-          project_or_work_order: '',
-          notes: rawText
-            ? `Pickup from ${locations.pickup_location || '-'} - deliver to ${
-                locations.dropoff_location || 'SEA991'
-              }.`
-            : 'Generated from AI Intake upload.',
+          requested_time: extractRequestedTime(rawText, locations.pickup_location),
+          shipment_transfer_id: poNumber,
+          project_or_work_order: poNumber,
+          po_number: poNumber,
+          notes: rawText,
         },
-        line_items: [
-          {
-            part_number: item.part_number,
-            description: item.description,
-            qty: quantity,
-          },
-        ],
+        line_items: lineItems,
         confidence: {},
         missing_required_fields: [],
-        warnings: rawText
-          ? []
-          : ['No pasted text found. Screenshot OCR is not wired yet. Paste the email text for accurate extraction.'],
+        warnings: rawText ? [] : ['No pasted text found. Paste the email text for accurate extraction.'],
       },
       validation_issues: [],
     });
   } catch (error) {
     return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : 'Extraction failed.',
-      },
+      { ok: false, message: error instanceof Error ? error.message : 'Extraction failed.' },
       { status: 500 }
     );
   }

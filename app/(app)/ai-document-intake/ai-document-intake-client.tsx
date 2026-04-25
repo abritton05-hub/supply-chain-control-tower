@@ -8,16 +8,12 @@ import {
 } from '@/lib/ai/intake/draft-storage';
 
 type Workflow = 'receiving' | 'pull_request' | 'delivery';
-type IntakeStage = 'idle' | 'uploaded' | 'classified' | 'extracted';
 
 export default function AiDocumentIntakeClient() {
   const [file, setFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState('');
-  const [documentId, setDocumentId] = useState('');
   const [workflow, setWorkflow] = useState<Workflow>('delivery');
-  const [stage, setStage] = useState<IntakeStage>('idle');
   const [message, setMessage] = useState('');
-  const [extraction, setExtraction] = useState<any>(null);
   const [isBusy, setIsBusy] = useState(false);
 
   async function safeJson(response: Response) {
@@ -28,14 +24,14 @@ export default function AiDocumentIntakeClient() {
     }
   }
 
-  async function upload() {
+  async function processIntake() {
     if (!file && !pastedText.trim()) {
       setMessage('Choose a file or paste email text first.');
       return;
     }
 
     setIsBusy(true);
-    setMessage('Uploading...');
+    setMessage('Processing intake...');
 
     try {
       const formData = new FormData();
@@ -43,57 +39,23 @@ export default function AiDocumentIntakeClient() {
       if (file) formData.append('file', file);
       if (pastedText.trim()) formData.append('raw_text', pastedText.trim());
 
-      const response = await fetch('/api/ai/intake/upload', {
+      const uploadResponse = await fetch('/api/ai/intake/upload', {
         method: 'POST',
         body: formData,
       });
 
-      const result = await safeJson(response);
+      const uploadResult = await safeJson(uploadResponse);
 
-      if (!response.ok || !result.ok) {
-        setMessage(result.message || 'Upload failed.');
+      if (!uploadResponse.ok || !uploadResult.ok) {
+        setMessage(uploadResult.message || 'Upload failed.');
         return;
       }
 
-      setDocumentId(result.document_id || `local-${Date.now()}`);
-      setStage('uploaded');
-      setMessage('Uploaded. Ready to classify.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Upload failed.');
-    } finally {
-      setIsBusy(false);
-    }
-  }
+      const documentId = uploadResult.document_id || `local-${Date.now()}`;
 
-  async function classify() {
-    if (!documentId) {
-      setMessage('Upload first.');
-      return;
-    }
+      setMessage('Extracting fields...');
 
-    setIsBusy(true);
-    setMessage('Classifying...');
-
-    try {
-      setWorkflow('delivery');
-      setStage('classified');
-      setMessage('Classified as Delivery / Pickup. Ready to extract.');
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function extract() {
-    if (!documentId) {
-      setMessage('Upload first.');
-      return;
-    }
-
-    setIsBusy(true);
-    setMessage('Extracting...');
-
-    try {
-      const response = await fetch('/api/ai/intake/extract', {
+      const extractResponse = await fetch('/api/ai/intake/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -103,64 +65,51 @@ export default function AiDocumentIntakeClient() {
         }),
       });
 
-      const result = await safeJson(response);
+      const extractResult = await safeJson(extractResponse);
 
-      if (!response.ok || !result.ok) {
-        setMessage(result.message || 'Extraction failed.');
+      if (!extractResponse.ok || !extractResult.ok) {
+        setMessage(extractResult.message || 'Extraction failed.');
         return;
       }
 
-      setExtraction(result.extraction);
-      setStage('extracted');
-      setMessage('Extracted. Ready to apply.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Extraction failed.');
-    } finally {
-      setIsBusy(false);
-    }
-  }
+      setMessage('Creating draft...');
 
-  async function apply() {
-    if (!documentId || !extraction) {
-      setMessage('Extract first.');
-      return;
-    }
-
-    setIsBusy(true);
-    setMessage('Applying...');
-
-    try {
-      const response = await fetch('/api/ai/intake/review/apply', {
+      const applyResponse = await fetch('/api/ai/intake/review/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document_id: documentId,
           selected_workflow_type: workflow,
           review_status: 'approved',
-          extraction,
+          extraction: extractResult.extraction,
         }),
       });
 
-      const result = await safeJson(response);
+      const applyResult = await safeJson(applyResponse);
 
-      if (!response.ok || !result.ok) {
-        setMessage(result.message || 'Apply failed.');
+      if (!applyResponse.ok || !applyResult.ok) {
+        setMessage(applyResult.message || 'Apply failed.');
+        return;
+      }
+
+      if (!applyResult.draft || !applyResult.route) {
+        setMessage('Draft was not returned.');
         return;
       }
 
       const storageKey =
-        result.draft.workflow_type === 'receiving'
+        applyResult.draft.workflow_type === 'receiving'
           ? RECEIVING_DRAFT_STORAGE_KEY
-          : result.draft.workflow_type === 'pull_request'
+          : applyResult.draft.workflow_type === 'pull_request'
             ? PULL_REQUEST_DRAFT_STORAGE_KEY
             : DELIVERY_DRAFT_STORAGE_KEY;
 
-      window.localStorage.setItem(storageKey, JSON.stringify(result.draft.draft));
+      window.localStorage.setItem(storageKey, JSON.stringify(applyResult.draft.draft));
 
       setMessage('Draft created. Redirecting...');
-      window.location.href = result.route;
+      window.location.href = applyResult.route;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Apply failed.');
+      setMessage(error instanceof Error ? error.message : 'Intake failed.');
     } finally {
       setIsBusy(false);
     }
@@ -171,12 +120,14 @@ export default function AiDocumentIntakeClient() {
       <section className="erp-card p-5">
         <h2 className="text-lg font-semibold text-slate-900">AI Intake</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Upload the source and paste the email text. Screenshots need pasted text until OCR is wired.
+          Paste email text or upload a source file, then process it into the correct workflow draft.
         </p>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-sm font-semibold text-slate-700">Workflow Type</span>
+            <span className="mb-1 block text-sm font-semibold text-slate-700">
+              Workflow Type
+            </span>
             <select
               value={workflow}
               onChange={(event) => setWorkflow(event.target.value as Workflow)}
@@ -189,7 +140,9 @@ export default function AiDocumentIntakeClient() {
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-sm font-semibold text-slate-700">Source File</span>
+            <span className="mb-1 block text-sm font-semibold text-slate-700">
+              Source File Optional
+            </span>
             <input
               type="file"
               accept="application/pdf,image/*,.heic,.heif,.eml,.msg,text/plain"
@@ -200,28 +153,39 @@ export default function AiDocumentIntakeClient() {
         </div>
 
         <label className="mt-4 block">
-          <span className="mb-1 block text-sm font-semibold text-slate-700">Email Text</span>
+          <span className="mb-1 block text-sm font-semibold text-slate-700">
+            Email / Request Text
+          </span>
           <textarea
             value={pastedText}
             onChange={(event) => setPastedText(event.target.value)}
-            rows={8}
+            rows={9}
             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            placeholder="Paste email text here. Example: Please schedule pickup from SEA99... taken directly to SEA991. Qty 1 of SA14596-0_E1 TIM,SGT Assembly..."
+            placeholder="Paste email, Teams message, shipment request, POC, SHIP number, S-number, from/to, item, and quantity here."
           />
         </label>
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          <button type="button" onClick={upload} disabled={isBusy} className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            Upload
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={processIntake}
+            disabled={isBusy}
+            className="rounded-md bg-cyan-700 px-5 py-3 text-sm font-semibold text-white hover:bg-cyan-800 disabled:cursor-wait disabled:opacity-60"
+          >
+            {isBusy ? 'Processing...' : 'Process Intake'}
           </button>
-          <button type="button" onClick={classify} disabled={isBusy || !documentId} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            Classify
-          </button>
-          <button type="button" onClick={extract} disabled={isBusy || stage !== 'classified'} className="rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            Extract
-          </button>
-          <button type="button" onClick={apply} disabled={isBusy || stage !== 'extracted'} className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            Apply
+
+          <button
+            type="button"
+            onClick={() => {
+              setFile(null);
+              setPastedText('');
+              setMessage('');
+            }}
+            disabled={isBusy}
+            className="rounded-md border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            Reset
           </button>
         </div>
       </section>
