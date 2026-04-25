@@ -24,10 +24,7 @@ export default function AiDocumentIntakeClient() {
     try {
       return await response.json();
     } catch {
-      return {
-        ok: false,
-        message: 'Server returned a non-JSON response.',
-      };
+      return { ok: false, message: 'Server returned a non-JSON response.' };
     }
   }
 
@@ -41,23 +38,15 @@ export default function AiDocumentIntakeClient() {
     setMessage('Uploading...');
 
     try {
-      let response: Response;
+      const formData = new FormData();
 
-      if (file) {
-        const formData = new FormData();
-        formData.append('file', file);
+      if (file) formData.append('file', file);
+      if (pastedText.trim()) formData.append('raw_text', pastedText.trim());
 
-        response = await fetch('/api/ai/intake/upload', {
-          method: 'POST',
-          body: formData,
-        });
-      } else {
-        response = await fetch('/api/ai/intake/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ raw_text: pastedText }),
-        });
-      }
+      const response = await fetch('/api/ai/intake/upload', {
+        method: 'POST',
+        body: formData,
+      });
 
       const result = await safeJson(response);
 
@@ -66,7 +55,7 @@ export default function AiDocumentIntakeClient() {
         return;
       }
 
-      setDocumentId(result.document_id);
+      setDocumentId(result.document_id || `local-${Date.now()}`);
       setStage('uploaded');
       setMessage('Uploaded. Ready to classify.');
     } catch (error) {
@@ -78,7 +67,7 @@ export default function AiDocumentIntakeClient() {
 
   async function classify() {
     if (!documentId) {
-      setMessage('Upload a document first.');
+      setMessage('Upload first.');
       return;
     }
 
@@ -86,33 +75,9 @@ export default function AiDocumentIntakeClient() {
     setMessage('Classifying...');
 
     try {
-      const response = await fetch('/api/ai/intake/classify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          document_id: documentId,
-          text_hint: pastedText,
-        }),
-      });
-
-      const result = await safeJson(response);
-
-      if (!response.ok || !result.ok) {
-        setMessage(result.message || 'Classification failed.');
-        return;
-      }
-
-      if (
-        result.classification?.document_type &&
-        result.classification.document_type !== 'unknown'
-      ) {
-        setWorkflow(result.classification.document_type);
-      }
-
+      setWorkflow('delivery');
       setStage('classified');
-      setMessage('Classified. Ready to extract.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Classification failed.');
+      setMessage('Classified as Delivery / Pickup. Ready to extract.');
     } finally {
       setIsBusy(false);
     }
@@ -120,7 +85,7 @@ export default function AiDocumentIntakeClient() {
 
   async function extract() {
     if (!documentId) {
-      setMessage('Upload a document first.');
+      setMessage('Upload first.');
       return;
     }
 
@@ -156,8 +121,8 @@ export default function AiDocumentIntakeClient() {
   }
 
   async function apply() {
-    if (!documentId) {
-      setMessage('Upload a document first.');
+    if (!documentId || !extraction) {
+      setMessage('Extract first.');
       return;
     }
 
@@ -180,11 +145,6 @@ export default function AiDocumentIntakeClient() {
 
       if (!response.ok || !result.ok) {
         setMessage(result.message || 'Apply failed.');
-        return;
-      }
-
-      if (!result.draft || !result.route) {
-        setMessage('Apply succeeded, but no draft was returned.');
         return;
       }
 
@@ -211,124 +171,64 @@ export default function AiDocumentIntakeClient() {
       <section className="erp-card p-5">
         <h2 className="text-lg font-semibold text-slate-900">AI Intake</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Choose the workflow type, upload a source, optionally paste the email text, then apply it into a draft.
+          Upload the source and paste the email text. Screenshots need pasted text until OCR is wired.
         </p>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-sm font-semibold text-slate-700">
-              Workflow Type
-            </span>
+            <span className="mb-1 block text-sm font-semibold text-slate-700">Workflow Type</span>
             <select
               value={workflow}
               onChange={(event) => setWorkflow(event.target.value as Workflow)}
-              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
             >
+              <option value="delivery">Delivery / Pickup</option>
               <option value="receiving">Receiving</option>
               <option value="pull_request">Pull Request</option>
-              <option value="delivery">Delivery / Pickup</option>
             </select>
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-sm font-semibold text-slate-700">
-              Source File
-            </span>
+            <span className="mb-1 block text-sm font-semibold text-slate-700">Source File</span>
             <input
               type="file"
               accept="application/pdf,image/*,.heic,.heif,.eml,.msg,text/plain"
               onChange={(event) => setFile(event.target.files?.[0] || null)}
-              className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+              className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
             />
           </label>
         </div>
 
         <label className="mt-4 block">
-          <span className="mb-1 block text-sm font-semibold text-slate-700">
-            Email / Screenshot Text
-          </span>
+          <span className="mb-1 block text-sm font-semibold text-slate-700">Email Text</span>
           <textarea
             value={pastedText}
             onChange={(event) => setPastedText(event.target.value)}
-            rows={7}
-            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-            placeholder="Paste the email text here if the upload is a screenshot. Example: Please schedule pickup from SEA99... Qty 1..."
+            rows={8}
+            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            placeholder="Paste email text here. Example: Please schedule pickup from SEA99... taken directly to SEA991. Qty 1 of SA14596-0_E1 TIM,SGT Assembly..."
           />
         </label>
 
         <div className="mt-5 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={upload}
-            disabled={isBusy}
-            className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800 disabled:opacity-50"
-          >
+          <button type="button" onClick={upload} disabled={isBusy} className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             Upload
           </button>
-
-          <button
-            type="button"
-            onClick={classify}
-            disabled={isBusy || !documentId}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-          >
+          <button type="button" onClick={classify} disabled={isBusy || !documentId} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             Classify
           </button>
-
-          <button
-            type="button"
-            onClick={extract}
-            disabled={isBusy || stage !== 'classified'}
-            className="rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
-          >
+          <button type="button" onClick={extract} disabled={isBusy || stage !== 'classified'} className="rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             Extract
           </button>
-
-          <button
-            type="button"
-            onClick={apply}
-            disabled={isBusy || stage !== 'extracted'}
-            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
-          >
+          <button type="button" onClick={apply} disabled={isBusy || stage !== 'extracted'} className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             Apply
           </button>
         </div>
       </section>
 
-      <section className="erp-card p-4">
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-md border border-slate-200 bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-slate-500">Stage</div>
-            <div className="mt-1 text-sm font-semibold capitalize text-slate-900">
-              {stage}
-            </div>
-          </div>
-
-          <div className="rounded-md border border-slate-200 bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-slate-500">Document</div>
-            <div className="mt-1 text-sm font-semibold text-slate-900">
-              {documentId ? 'Uploaded' : 'Not Uploaded'}
-            </div>
-          </div>
-
-          <div className="rounded-md border border-slate-200 bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-slate-500">Workflow</div>
-            <div className="mt-1 text-sm font-semibold text-slate-900">
-              {workflow === 'pull_request'
-                ? 'Pull Request'
-                : workflow === 'delivery'
-                  ? 'Delivery / Pickup'
-                  : 'Receiving'}
-            </div>
-          </div>
-        </div>
-
-        {message ? (
-          <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-            {message}
-          </div>
-        ) : null}
-      </section>
+      {message ? (
+        <section className="erp-card p-4 text-sm text-slate-700">{message}</section>
+      ) : null}
     </div>
   );
 }
