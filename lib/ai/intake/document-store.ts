@@ -6,7 +6,8 @@ import { AI_INTAKE_STORAGE_BUCKET } from './constants';
 import type { IntakeDocumentRecord, StoredIntakeSource } from './types';
 
 export async function loadIntakeDocument(documentId: string) {
-  const supabase = supabaseAdmin();
+  const supabase = await supabaseAdmin();
+
   const { data, error } = await supabase
     .from('ai_intake_documents')
     .select(
@@ -46,7 +47,8 @@ export async function loadStoredIntakeSource(documentId: string): Promise<Stored
     throw new Error('File intake document has no storage path.');
   }
 
-  const supabase = supabaseAdmin();
+  const supabase = await supabaseAdmin();
+
   const { data, error } = await supabase.storage
     .from(AI_INTAKE_STORAGE_BUCKET)
     .download(document.storage_path);
@@ -71,7 +73,8 @@ export async function markIntakeDocumentStatus(
   documentId: string,
   status: IntakeDocumentRecord['status']
 ) {
-  const supabase = supabaseAdmin();
+  const supabase = await supabaseAdmin();
+
   const { error } = await supabase
     .from('ai_intake_documents')
     .update({ status })

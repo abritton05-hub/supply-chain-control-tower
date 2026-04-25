@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx';
 import { DataTable } from '@/components/data-table';
+import { DELIVERY_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
 import type {
   BomHeader,
   DeliveryPageData,
@@ -11,6 +12,8 @@ import type {
   HistoryRecord,
   ManifestHeader,
 } from './types';
+
+const DEFAULT_SITE = 'SEA991';
 
 const DELIVERY_TABS: { view: DeliveryView; label: string; href: string }[] = [
   { view: 'bom', label: 'BOM / Release', href: '/delivery?view=bom' },
@@ -35,6 +38,8 @@ type MovementDraft = {
   reference: string | null;
   company: string | null;
   location: string | null;
+  fromLocation: string | null;
+  toLocation: string | null;
   contact: string | null;
   items: string | null;
   notes: string | null;
@@ -50,10 +55,28 @@ type ManualFormState = {
   shipmentTransferId: string;
   reference: string;
   company: string;
-  location: string;
+  fromLocation: string;
+  toLocation: string;
   contact: string;
   items: string;
   notes: string;
+};
+
+type DeliveryDraftPayload = {
+  direction?: 'pickup' | 'delivery' | 'incoming' | 'outgoing' | 'unknown';
+  company_name?: string;
+  pickup_location?: string;
+  dropoff_location?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  requested_date?: string;
+  requested_time?: string;
+  shipment_transfer_id?: string;
+  project_or_work_order?: string;
+  carrier_or_driver?: string;
+  items?: string;
+  notes?: string;
 };
 
 const EMPTY_FORM: ManualFormState = {
@@ -64,7 +87,8 @@ const EMPTY_FORM: ManualFormState = {
   shipmentTransferId: '',
   reference: '',
   company: '',
-  location: '',
+  fromLocation: '',
+  toLocation: DEFAULT_SITE,
   contact: '',
   items: '',
   notes: '',
@@ -84,7 +108,7 @@ function formatTime(value: string | null) {
 
 function directionLabel(direction: string | null) {
   if (direction === 'incoming') return 'Pickup';
-  if (direction === 'outgoing') return 'Delivery';
+  if (direction === 'outgoing') return 'Drop-Off';
   return '-';
 }
 
@@ -100,13 +124,19 @@ function sortDateTime(date: string | null, time: string | null) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function normalizeText(value: string | null | undefined) {
+  return value?.trim() || '';
+}
+
 function toMovementDraft(manifest: ManifestHeader): MovementDraft {
+  const direction: MovementDirection = manifest.direction === 'incoming' ? 'incoming' : 'outgoing';
+
   return {
     id: `saved-${manifest.id}`,
     source: 'saved',
     manifestNumber: manifest.manifest_number || null,
     title: manifest.document_title || 'Material Manifest',
-    direction: manifest.direction === 'incoming' ? 'incoming' : 'outgoing',
+    direction,
     date: manifest.manifest_date,
     time: manifest.manifest_time,
     driverCarrier: manifest.driver_carrier || null,
@@ -114,6 +144,8 @@ function toMovementDraft(manifest: ManifestHeader): MovementDraft {
     reference: manifest.reference_project_work_order || null,
     company: null,
     location: null,
+    fromLocation: null,
+    toLocation: direction === 'incoming' ? DEFAULT_SITE : null,
     contact: null,
     items: null,
     notes: null,
@@ -143,7 +175,7 @@ function parseUploadRows(rows: Record<string, unknown>[], direction: MovementDir
     .map((row, index) => {
       const title =
         normalizeCell(row, ['title', 'document title', 'job title', 'stop title']) ||
-        `${direction === 'incoming' ? 'Pickup' : 'Delivery'} ${index + 1}`;
+        `${direction === 'incoming' ? 'Pickup' : 'Drop-Off'} ${index + 1}`;
 
       const date = normalizeCell(row, [
         'date',
@@ -179,7 +211,12 @@ function parseUploadRows(rows: Record<string, unknown>[], direction: MovementDir
         'job',
       ]);
       const company = normalizeCell(row, ['company', 'customer', 'vendor']);
-      const location = normalizeCell(row, ['location', 'address', 'site', 'ship to', 'ship from']);
+      const fromLocation =
+        normalizeCell(row, ['from', 'from location', 'pickup location', 'ship from']) || null;
+      const toLocation =
+        normalizeCell(row, ['to', 'to location', 'dropoff location', 'drop off location', 'ship to']) ||
+        (direction === 'incoming' ? DEFAULT_SITE : null);
+      const location = direction === 'incoming' ? fromLocation : toLocation;
       const contact = normalizeCell(row, ['contact', 'contact name', 'recipient']);
       const items = normalizeCell(row, ['items', 'parts', 'materials', 'description']);
       const notes = normalizeCell(row, ['notes', 'comments', 'remarks']);
@@ -198,6 +235,8 @@ function parseUploadRows(rows: Record<string, unknown>[], direction: MovementDir
         reference: reference || null,
         company: company || null,
         location: location || null,
+        fromLocation,
+        toLocation,
         contact: contact || null,
         items: items || null,
         notes: notes || null,
@@ -258,9 +297,9 @@ function StatStrip({
 }) {
   const stats = [
     { label: 'BOM / Release', value: bomCount },
-    { label: 'Manifest', value: manifestCount },
+    { label: 'Manifest Rows', value: manifestCount },
     { label: 'Pickups', value: pickupCount },
-    { label: 'Deliveries', value: deliveryCount },
+    { label: 'Drop-Offs', value: deliveryCount },
   ];
 
   return (
@@ -410,7 +449,7 @@ function ManualEntryPanel({
         <div>
           <h3 className="text-base font-semibold text-slate-900">{title}</h3>
           <p className="mt-1 text-sm text-slate-500">
-            Add a {direction === 'incoming' ? 'pickup' : 'delivery'} stop manually.
+            Add a {direction === 'incoming' ? 'pickup' : 'drop-off'} stop manually.
           </p>
         </div>
         <button
@@ -429,7 +468,7 @@ function ManualEntryPanel({
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             value={form.title}
             onChange={(event) => onChange('title', event.target.value)}
-            placeholder={direction === 'incoming' ? 'Pickup stop title' : 'Delivery stop title'}
+            placeholder={direction === 'incoming' ? 'Pickup stop title' : 'Drop-off stop title'}
           />
         </label>
 
@@ -494,12 +533,22 @@ function ManualEntryPanel({
         </label>
 
         <label className="text-sm font-medium text-slate-700">
-          Location
+          From
           <input
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            value={form.location}
-            onChange={(event) => onChange('location', event.target.value)}
-            placeholder="Address or stop location"
+            value={form.fromLocation}
+            onChange={(event) => onChange('fromLocation', event.target.value)}
+            placeholder={direction === 'incoming' ? 'Pickup from' : 'Ship from'}
+          />
+        </label>
+
+        <label className="text-sm font-medium text-slate-700">
+          To
+          <input
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            value={form.toLocation}
+            onChange={(event) => onChange('toLocation', event.target.value)}
+            placeholder={`Default: ${DEFAULT_SITE}`}
           />
         </label>
 
@@ -540,7 +589,7 @@ function ManualEntryPanel({
           onClick={onSave}
           className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
         >
-          Save {direction === 'incoming' ? 'Pickup' : 'Delivery'}
+          Save {direction === 'incoming' ? 'Pickup' : 'Drop-Off'}
         </button>
       </div>
     </section>
@@ -572,7 +621,7 @@ function UploadPanel({
           Upload file
           <input
             type="file"
-            accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp,.eml,.msg"
+            accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,.eml,.msg"
             className="mt-2 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -618,12 +667,12 @@ function MovementTable({
             <th>Record</th>
             <th>Date</th>
             <th>Time</th>
+            <th>From</th>
+            <th>To</th>
             <th>Company</th>
-            <th>Location</th>
             <th>Contact</th>
             <th>Items</th>
             <th>Driver / Carrier</th>
-            <th>Reference</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -652,17 +701,70 @@ function MovementTable({
               </td>
               <td>{formatDate(row.date)}</td>
               <td>{formatTime(row.time)}</td>
+              <td>{row.fromLocation || '-'}</td>
+              <td>{row.toLocation || '-'}</td>
               <td>{row.company || '-'}</td>
-              <td>{row.location || '-'}</td>
               <td>{row.contact || '-'}</td>
               <td>{row.items || '-'}</td>
               <td>{row.driverCarrier || '-'}</td>
-              <td>{row.reference || row.shipmentTransferId || '-'}</td>
               <td>{row.status || '-'}</td>
             </tr>
           ))}
         </tbody>
       </DataTable>
+    </div>
+  );
+}
+
+function ManifestMovementTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: MovementDraft[];
+}) {
+  return (
+    <div className="mt-5">
+      <div className="rounded-md bg-slate-900 px-4 py-3 text-sm font-bold uppercase tracking-wide text-white">
+        {title} ({rows.length})
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="border-x border-b border-slate-200 px-4 py-6 text-sm text-slate-500">
+          No rows.
+        </div>
+      ) : (
+        <div className="overflow-x-auto border-x border-b border-slate-200">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">From</th>
+                <th className="px-3 py-2">To</th>
+                <th className="px-3 py-2">Company</th>
+                <th className="px-3 py-2">Contact</th>
+                <th className="px-3 py-2">Items</th>
+                <th className="px-3 py-2">Driver / Carrier</th>
+                <th className="px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id} className="border-t border-slate-100">
+                  <td className="px-3 py-2">{formatTime(row.time)}</td>
+                  <td className="px-3 py-2 font-semibold text-slate-800">{row.fromLocation || '-'}</td>
+                  <td className="px-3 py-2 font-semibold text-slate-800">{row.toLocation || '-'}</td>
+                  <td className="px-3 py-2">{row.company || '-'}</td>
+                  <td className="px-3 py-2">{row.contact || '-'}</td>
+                  <td className="px-3 py-2">{row.items || '-'}</td>
+                  <td className="px-3 py-2">{row.driverCarrier || '-'}</td>
+                  <td className="px-3 py-2">{row.status || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -690,7 +792,7 @@ function ManifestView({
         <div>
           <h2 className="text-base font-semibold text-slate-900">Daily Manifest</h2>
           <p className="text-sm text-slate-500">
-            Deliveries print on the top half. Pickups print on the bottom half.
+            Shows pickup/drop-off counts, from/to locations, items, contacts, and driver notes.
           </p>
         </div>
 
@@ -719,25 +821,25 @@ function ManifestView({
         <div className="border-b border-slate-200 pb-4">
           <h1 className="text-2xl font-bold text-slate-900">Driver Daily Manifest</h1>
           <p className="mt-1 text-sm text-slate-500">Date: {formatDate(selectedDate)}</p>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-semibold uppercase text-slate-500">Total Stops</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{rows.length}</div>
+            </div>
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+              <div className="text-xs font-semibold uppercase text-emerald-700">Pickups</div>
+              <div className="mt-1 text-2xl font-bold text-emerald-800">{pickups.length}</div>
+            </div>
+            <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3">
+              <div className="text-xs font-semibold uppercase text-cyan-700">Drop-Offs</div>
+              <div className="mt-1 text-2xl font-bold text-cyan-800">{deliveries.length}</div>
+            </div>
+          </div>
         </div>
 
-        <div className="mt-6">
-          <div className="rounded-md bg-cyan-50 px-4 py-3 text-sm font-bold uppercase tracking-wide text-cyan-800">
-            Deliveries / Drop-Offs
-          </div>
-          <div className="border-x border-b border-slate-200 px-4 py-6 text-sm text-slate-500">
-            {deliveries.length} delivery row(s)
-          </div>
-        </div>
-
-        <div className="mt-8">
-          <div className="rounded-md bg-emerald-50 px-4 py-3 text-sm font-bold uppercase tracking-wide text-emerald-800">
-            Pickups
-          </div>
-          <div className="border-x border-b border-slate-200 px-4 py-6 text-sm text-slate-500">
-            {pickups.length} pickup row(s)
-          </div>
-        </div>
+        <ManifestMovementTable title="Pickups" rows={pickups} />
+        <ManifestMovementTable title="Drop-Offs" rows={deliveries} />
       </section>
     </div>
   );
@@ -770,7 +872,7 @@ function HistoryView({
       <section className="erp-panel p-4">
         <h2 className="text-base font-semibold text-slate-900">Movement History</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Daily pickup and delivery activity, including saved manifests plus manual and uploaded working rows.
+          Daily pickup and drop-off activity, including saved manifests plus manual and uploaded working rows.
         </p>
       </section>
 
@@ -778,44 +880,11 @@ function HistoryView({
         <section className="erp-card p-8 text-center">
           <h2 className="text-base font-semibold text-slate-800">No movement history yet</h2>
           <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">
-            Pickup and delivery activity will appear here once records are added or imported.
+            Pickup and drop-off activity will appear here once records are added or imported.
           </p>
         </section>
       ) : (
-        <DataTable>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Time</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Company</th>
-              <th>Location</th>
-              <th>Contact</th>
-              <th>Items</th>
-              <th>Driver / Carrier</th>
-              <th>Reference</th>
-              <th>Source</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedMovements.map((row) => (
-              <tr key={row.id}>
-                <td>{formatDate(row.date)}</td>
-                <td>{formatTime(row.time)}</td>
-                <td>{directionLabel(row.direction)}</td>
-                <td>{row.status || '-'}</td>
-                <td>{row.company || '-'}</td>
-                <td>{row.location || '-'}</td>
-                <td>{row.contact || '-'}</td>
-                <td>{row.items || '-'}</td>
-                <td>{row.driverCarrier || '-'}</td>
-                <td>{row.reference || row.shipmentTransferId || '-'}</td>
-                <td className="uppercase">{row.source}</td>
-              </tr>
-            ))}
-          </tbody>
-        </DataTable>
+        <MovementTable rows={sortedMovements} emptyMessage="No movement history yet" />
       )}
 
       {records.length > 0 ? (
@@ -846,11 +915,61 @@ export function DeliveryClient({
   const [showPickupUpload, setShowPickupUpload] = useState(false);
   const [showDeliveryUpload, setShowDeliveryUpload] = useState(false);
   const [pickupForm, setPickupForm] = useState<ManualFormState>(EMPTY_FORM);
-  const [deliveryForm, setDeliveryForm] = useState<ManualFormState>(EMPTY_FORM);
+  const [deliveryForm, setDeliveryForm] = useState<ManualFormState>({
+    ...EMPTY_FORM,
+    fromLocation: DEFAULT_SITE,
+    toLocation: '',
+  });
   const [uploadMessage, setUploadMessage] = useState('');
   const [selectedManifestDate, setSelectedManifestDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
+
+  useEffect(() => {
+    try {
+      const rawDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
+
+      if (!rawDraft) return;
+
+      const draft = JSON.parse(rawDraft) as DeliveryDraftPayload;
+      const isDelivery = draft.direction === 'delivery' || draft.direction === 'outgoing';
+      const fromLocation = isDelivery
+        ? normalizeText(draft.pickup_location) || DEFAULT_SITE
+        : normalizeText(draft.pickup_location);
+      const toLocation = isDelivery
+        ? normalizeText(draft.dropoff_location)
+        : normalizeText(draft.dropoff_location) || DEFAULT_SITE;
+
+      const newRow: MovementDraft = {
+        id: `ai-delivery-${Date.now()}`,
+        source: 'upload',
+        manifestNumber: null,
+        title: draft.items || (isDelivery ? 'AI Intake Drop-Off' : 'AI Intake Pickup'),
+        direction: isDelivery ? 'outgoing' : 'incoming',
+        date: draft.requested_date || new Date().toISOString().slice(0, 10),
+        time: draft.requested_time || null,
+        driverCarrier: draft.carrier_or_driver || null,
+        shipmentTransferId: draft.shipment_transfer_id || null,
+        reference: draft.project_or_work_order || null,
+        company: draft.company_name || null,
+        location: isDelivery ? toLocation || null : fromLocation || null,
+        fromLocation: fromLocation || null,
+        toLocation: toLocation || null,
+        contact: draft.contact_name || draft.contact_email || null,
+        items: draft.items || null,
+        notes: draft.notes || 'Generated from AI Intake.',
+        status: 'AI Draft',
+        href: null,
+      };
+
+      setManualRows((current) => [newRow, ...current]);
+      setUploadMessage('AI Intake draft added to the working manifest.');
+      window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
+    } catch (error) {
+      console.error('Failed to load AI delivery draft:', error);
+      setUploadMessage('AI Intake draft could not be loaded.');
+    }
+  }, []);
 
   const savedRows = useMemo(() => manifests.map(toMovementDraft), [manifests]);
   const allRows = useMemo(
@@ -889,11 +1008,16 @@ export function DeliveryClient({
   }
 
   function buildManualRow(direction: MovementDirection, form: ManualFormState): MovementDraft {
+    const fromLocation =
+      normalizeText(form.fromLocation) || (direction === 'outgoing' ? DEFAULT_SITE : null);
+    const toLocation =
+      normalizeText(form.toLocation) || (direction === 'incoming' ? DEFAULT_SITE : null);
+
     return {
       id: `manual-${direction}-${Math.random().toString(36).slice(2, 10)}`,
       source: 'manual',
       manifestNumber: null,
-      title: form.title || (direction === 'incoming' ? 'Manual Pickup' : 'Manual Delivery'),
+      title: form.title || (direction === 'incoming' ? 'Manual Pickup' : 'Manual Drop-Off'),
       direction,
       date: form.date || null,
       time: form.time || null,
@@ -901,7 +1025,9 @@ export function DeliveryClient({
       shipmentTransferId: form.shipmentTransferId || null,
       reference: form.reference || null,
       company: form.company || null,
-      location: form.location || null,
+      location: direction === 'incoming' ? fromLocation : toLocation,
+      fromLocation,
+      toLocation,
       contact: form.contact || null,
       items: form.items || null,
       notes: form.notes || null,
@@ -920,8 +1046,12 @@ export function DeliveryClient({
   function saveDelivery() {
     setManualRows((current) => [...current, buildManualRow('outgoing', deliveryForm)]);
     setShowDeliveryForm(false);
-    setDeliveryForm(EMPTY_FORM);
-    setUploadMessage('Delivery added to today’s working manifest.');
+    setDeliveryForm({
+      ...EMPTY_FORM,
+      fromLocation: DEFAULT_SITE,
+      toLocation: '',
+    });
+    setUploadMessage('Drop-off added to today’s working manifest.');
   }
 
   async function handleUpload(file: File, direction: MovementDirection) {
@@ -959,7 +1089,7 @@ export function DeliveryClient({
 
       setManualRows((current) => [...current, ...parsed]);
       setUploadMessage(
-        `${parsed.length} ${direction === 'incoming' ? 'pickup' : 'delivery'} row(s) imported into the working manifest.`
+        `${parsed.length} ${direction === 'incoming' ? 'pickup' : 'drop-off'} row(s) imported into the working manifest.`
       );
     } catch (error) {
       setUploadMessage(error instanceof Error ? error.message : 'The upload could not be read.');
@@ -1035,9 +1165,9 @@ export function DeliveryClient({
       {view === 'deliveries' ? (
         <div className="space-y-4">
           <SectionToolbar
-            title="Deliveries"
-            subtitle="Manual delivery entry plus uploaded files for daily route planning."
-            addLabel="Add Delivery"
+            title="Drop-Offs"
+            subtitle="Manual drop-off entry plus uploaded files for daily route planning."
+            addLabel="Add Drop-Off"
             uploadLabel="Upload"
             onAdd={() => {
               setShowDeliveryForm((current) => !current);
@@ -1051,7 +1181,7 @@ export function DeliveryClient({
 
           <ManualEntryPanel
             open={showDeliveryForm}
-            title="Add Delivery"
+            title="Add Drop-Off"
             direction="outgoing"
             form={deliveryForm}
             onChange={updateDeliveryForm}
@@ -1061,13 +1191,13 @@ export function DeliveryClient({
 
           <UploadPanel
             open={showDeliveryUpload}
-            title="Upload Deliveries"
-            description="Upload delivery details from a file. CSV and Excel import today; email, screenshots, PDFs, and image parsing will route through AI Intake next."
+            title="Upload Drop-Offs"
+            description="Upload drop-off details from a file. CSV and Excel import today; email, screenshots, PDFs, and image parsing will route through AI Intake next."
             helper="Today: CSV / Excel. Next: emails, screenshots, PDFs, packing slips, and images through AI Intake."
             onFileChange={(file) => handleUpload(file, 'outgoing')}
           />
 
-          <MovementTable rows={deliveryRows} emptyMessage="No deliveries yet" />
+          <MovementTable rows={deliveryRows} emptyMessage="No drop-offs yet" />
         </div>
       ) : null}
 

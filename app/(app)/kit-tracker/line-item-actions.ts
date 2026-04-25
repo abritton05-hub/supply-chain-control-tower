@@ -13,7 +13,6 @@ import {
 import type {
   KitLineImportInput,
   KitLineImportResult,
-  KitLineRecord,
 } from './line-item-types';
 
 async function getExistingSourceKeys(rows: KitLineImportInput[]) {
@@ -28,7 +27,8 @@ async function getExistingSourceKeys(rows: KitLineImportInput[]) {
 
   if (sourceKeys.length === 0) return new Set<string>();
 
-  const supabase = supabaseAdmin();
+  const supabase = await supabaseAdmin();
+
   const { data, error } = await supabase
     .from('kit_line_items')
     .select('source_key')
@@ -105,6 +105,7 @@ export async function importKitLineItems(
 
     const existingSourceKeys = await getExistingSourceKeys(rows);
     const preview = buildKitLinePreview(rows, existingSourceKeys);
+
     const rowsToSave = preview.rows
       .filter((row) => row.status !== 'skipped')
       .map((row) => row.record);
@@ -115,12 +116,13 @@ export async function importKitLineItems(
         message: `No usable readiness rows to import. Skipped ${preview.summary.skippedBlank} blank and ${preview.summary.skippedInvalid} invalid.`,
         summary: toLegacySummary(
           preview.summary,
-          preview.skipReasons.map((reason) => `Row ${reason.rowNumber}: ${reason.reason}`).slice(0, 5)
+          preview.skipReasons.map((r) => `Row ${r.rowNumber}: ${r.reason}`).slice(0, 5)
         ),
       };
     }
 
-    const supabase = supabaseAdmin();
+    const supabase = await supabaseAdmin();
+
     const { error } = await supabase
       .from('kit_line_items')
       .upsert(rowsToSave.map(toKitLinePayload), { onConflict: 'source_key' });
@@ -139,10 +141,10 @@ export async function importKitLineItems(
 
     return {
       ok: true,
-      message: `Readiness import complete. ${preview.summary.newRecords} new, ${preview.summary.updates} updated, ${preview.summary.incompleteUsable} incomplete but usable, ${preview.summary.skippedBlank + preview.summary.skippedInvalid} skipped.`,
+      message: `Readiness import complete. ${preview.summary.newRecords} new, ${preview.summary.updates} updated, ${preview.summary.incompleteUsable} incomplete usable, ${preview.summary.skippedBlank + preview.summary.skippedInvalid} skipped.`,
       summary: toLegacySummary(
         preview.summary,
-        preview.skipReasons.map((reason) => `Row ${reason.rowNumber}: ${reason.reason}`).slice(0, 5)
+        preview.skipReasons.map((r) => `Row ${r.rowNumber}: ${r.reason}`).slice(0, 5)
       ),
     };
   } catch (error) {
@@ -186,10 +188,11 @@ export async function createKitLineItem(
       return { ok: false, message: invalidReason };
     }
 
-    const supabase = supabaseAdmin();
-    const { error } = await supabase.from('kit_line_items').upsert(toKitLinePayload(normalized), {
-      onConflict: 'source_key',
-    });
+    const supabase = await supabaseAdmin();
+
+    const { error } = await supabase
+      .from('kit_line_items')
+      .upsert(toKitLinePayload(normalized), { onConflict: 'source_key' });
 
     if (error) {
       return { ok: false, message: error.message };
@@ -228,7 +231,8 @@ export async function updateKitLineItem(
       return { ok: false, message: invalidReason };
     }
 
-    const supabase = supabaseAdmin();
+    const supabase = await supabaseAdmin();
+
     const { error } = await supabase
       .from('kit_line_items')
       .update(toKitLinePayload(normalized))

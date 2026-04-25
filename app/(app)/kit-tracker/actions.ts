@@ -75,7 +75,9 @@ function isBlankKit(input: KitFormInput) {
     input.delivery_requested_date,
     input.delivery_scheduled_date,
     input.notes,
-  ].every((value) => !clean(String(value ?? ''))) && input.status === 'Not Started' && !input.delivery_requested;
+  ].every((value) => !clean(String(value ?? ''))) &&
+    input.status === 'Not Started' &&
+    !input.delivery_requested;
 }
 
 function toPayload(input: KitFormInput) {
@@ -107,6 +109,7 @@ export async function createKit(input: KitFormInput): Promise<KitActionResult> {
 
     const supabase = await supabaseServer();
     const payload = toPayload(input);
+
     const { data: insertedKit, error } = await supabase
       .from('kits')
       .insert(payload)
@@ -135,7 +138,7 @@ export async function createKit(input: KitFormInput): Promise<KitActionResult> {
     if (!activity.ok) {
       return {
         ok: false,
-        message: `Kit added, but activity logging failed: ${activity.message}`,
+        message: 'Kit added, but activity logging failed.',
       };
     }
 
@@ -160,6 +163,7 @@ export async function updateKit(input: KitFormInput): Promise<KitActionResult> {
 
     const supabase = await supabaseServer();
     const payload = toPayload(input);
+
     const { error } = await supabase
       .from('kits')
       .update(payload)
@@ -181,7 +185,7 @@ export async function updateKit(input: KitFormInput): Promise<KitActionResult> {
     if (!activity.ok) {
       return {
         ok: false,
-        message: `Kit updated, but activity logging failed: ${activity.message}`,
+        message: 'Kit updated, but activity logging failed.',
       };
     }
 
@@ -238,6 +242,7 @@ export async function importKits(inputs: KitFormInput[]): Promise<KitActionResul
 
     const supabase = await supabaseServer();
     const kitNumbers = validInputs.map((input) => clean(input.kit_number));
+
     const { data: existingRows, error: existingError } = await supabase
       .from('kits')
       .select('kit_number')
@@ -260,6 +265,7 @@ export async function importKits(inputs: KitFormInput[]): Promise<KitActionResul
     }
 
     revalidatePath('/kit-tracker');
+
     const sampleReasons = skipReasons.slice(0, 5);
     const reasonText = sampleReasons.length ? ` Sample issues: ${sampleReasons.join(' ')}` : '';
 

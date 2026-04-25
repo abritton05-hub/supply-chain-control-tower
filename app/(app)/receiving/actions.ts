@@ -204,7 +204,7 @@ export async function receiveInventoryItem(input: ReceiveInput) {
     if (!activity.ok) {
       return {
         ok: true,
-        message: `Receipt posted, but activity logging failed: ${activity.message}`,
+        message: 'Receipt posted, but activity logging failed.',
         transactionId: String(transactionId),
       };
     }

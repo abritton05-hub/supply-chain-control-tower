@@ -2,7 +2,7 @@ import './globals.css';
 
 export const metadata = {
   title: 'Supply Chain Control Tower',
-  description: 'Internal ERP-style supply chain operations platform',
+  description: 'ERP operations dashboard',
 };
 
 export default function RootLayout({

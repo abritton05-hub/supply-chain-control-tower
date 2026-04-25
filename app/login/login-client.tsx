@@ -3,9 +3,10 @@
 import { useState, useTransition } from 'react';
 import { supabaseBrowser } from '@/lib/supabase/client';
 
-type LoginResult =
-  | { ok: true }
-  | { ok: false; message: string };
+type LoginResult = {
+  ok: boolean;
+  message: string;
+};
 
 async function signInWithPassword(
   email: string,
@@ -24,7 +25,7 @@ async function signInWithPassword(
     }
 
     window.location.href = '/inventory';
-    return { ok: true };
+    return { ok: true, message: 'Signed in.' };
   } catch (error) {
     return {
       ok: false,
@@ -49,7 +50,10 @@ async function sendMagicLink(email: string): Promise<LoginResult> {
       return { ok: false, message: error.message };
     }
 
-    return { ok: true };
+    return {
+      ok: true,
+      message: 'Magic link sent. Check your email and use the newest link.',
+    };
   } catch (error) {
     return {
       ok: false,
@@ -71,7 +75,10 @@ async function sendForgotPassword(email: string): Promise<LoginResult> {
       return { ok: false, message: error.message };
     }
 
-    return { ok: true };
+    return {
+      ok: true,
+      message: 'Password reset link sent. Check your email.',
+    };
   } catch (error) {
     return {
       ok: false,
@@ -96,7 +103,10 @@ export function LoginClient() {
 
       if (!result.ok) {
         setMessage(result.message);
+        return;
       }
+
+      setMessage(result.message);
     });
   }
 
@@ -112,13 +122,7 @@ export function LoginClient() {
       }
 
       const result = await sendMagicLink(cleanEmail);
-
-      if (!result.ok) {
-        setMessage(result.message);
-        return;
-      }
-
-      setMessage('Magic link sent. Check your email and use the newest link.');
+      setMessage(result.message);
     });
   }
 
@@ -134,13 +138,7 @@ export function LoginClient() {
       }
 
       const result = await sendForgotPassword(cleanEmail);
-
-      if (!result.ok) {
-        setMessage(result.message);
-        return;
-      }
-
-      setMessage('Password reset link sent. Check your email.');
+      setMessage(result.message);
     });
   }
 
