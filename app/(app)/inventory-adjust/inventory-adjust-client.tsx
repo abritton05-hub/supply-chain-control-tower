@@ -22,7 +22,7 @@ type UploadRow = {
   bin_location: string;
 };
 
-const SITE_OPTIONS = ['SEA991', 'WH/A13', 'SEA99', 'SEA129', 'SEA133', 'SEA143'];
+const SITE_OPTIONS = ['SEA991', 'WH/A13', 'SEA99', 'SEA111', 'SEA129', 'SEA133', 'SEA143'];
 
 const EMPTY_FORM: InventoryFormInput = {
   item_id: '',

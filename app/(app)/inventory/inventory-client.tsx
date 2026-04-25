@@ -21,7 +21,7 @@ type CountCapture = {
 
 type AppRole = 'admin' | 'ops_manager' | 'warehouse' | 'viewer';
 
-const LOCATION_TABS = ['SEA991', 'WH/A13', 'SEA99', 'SEA129', 'SEA133', 'SEA143'];
+const LOCATION_TABS = ['SEA991', 'WH/A13', 'SEA99', 'SEA111', 'SEA129', 'SEA133', 'SEA143'];
 
 function statusTone(status: string) {
   if (status === 'OUT') return 'bg-rose-50 text-rose-700 border-rose-200';
