@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
-import { supabaseBrowser } from '@/lib/supabase/client';
+import { useEffect, useState } from 'react';
 
 type UserRole = 'tech' | 'warehouse' | 'admin';
 
@@ -10,19 +9,14 @@ type UserRow = {
   email: string | null;
   full_name: string | null;
   role: UserRole;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
 type UsersResponse = {
   ok: boolean;
   users?: UserRow[];
-  message?: string;
-};
-
-type UserUpdateResponse = {
-  ok: boolean;
   user?: UserRow;
   message?: string;
 };
@@ -33,34 +27,36 @@ const ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
   { value: 'admin', label: 'Admin' },
 ];
 
-function normalizeRole(value: string | null | undefined): UserRole {
+function normalizeRole(value: unknown): UserRole {
   if (value === 'admin') return 'admin';
   if (value === 'warehouse') return 'warehouse';
   return 'tech';
 }
 
 export function UsersClient() {
-  const [rows, setRows] = useState<UserRow[]>([]);
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [newFullName, setNewFullName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newRole, setNewRole] = useState<UserRole>('tech');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
-  const [isPending, startTransition] = useTransition();
+  const [working, setWorking] = useState(false);
 
   async function loadUsers() {
     setLoading(true);
-    setMessage('');
 
     try {
       const response = await fetch('/api/users', { cache: 'no-store' });
       const result = (await response.json()) as UsersResponse;
 
       if (!response.ok || !result.ok) {
-        setRows([]);
+        setUsers([]);
         setMessage(result.message || 'Failed to load users.');
         setLoading(false);
         return;
       }
 
-      setRows(
+      setUsers(
         (result.users ?? []).map((user) => ({
           ...user,
           role: normalizeRole(user.role),
@@ -68,7 +64,7 @@ export function UsersClient() {
       );
       setLoading(false);
     } catch (error) {
-      setRows([]);
+      setUsers([]);
       setMessage(error instanceof Error ? error.message : 'Failed to load users.');
       setLoading(false);
     }
@@ -78,91 +74,166 @@ export function UsersClient() {
     loadUsers();
   }, []);
 
-  function updateLocalRow(id: string, patch: Partial<UserRow>) {
-    setRows((current) =>
-      current.map((row) => (row.id === id ? { ...row, ...patch } : row))
+  function updateLocalUser(id: string, patch: Partial<UserRow>) {
+    setUsers((current) =>
+      current.map((user) => (user.id === id ? { ...user, ...patch } : user))
     );
   }
 
-  function saveRow(row: UserRow) {
+  async function addUser() {
     setMessage('');
 
-    startTransition(async () => {
-      try {
-        const response = await fetch('/api/users', {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            id: row.id,
-            full_name: row.full_name ?? '',
-            role: row.role,
-            is_active: true,
-          }),
-        });
+    if (!newEmail.trim()) {
+      setMessage('Email is required.');
+      return;
+    }
 
-        const result = (await response.json()) as UserUpdateResponse;
+    setWorking(true);
 
-        if (!response.ok || !result.ok) {
-          setMessage(result.message || 'Failed to update user.');
-          return;
-        }
+    try {
+      const response = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: newEmail,
+          full_name: newFullName,
+          role: newRole,
+        }),
+      });
 
-        if (result.user) {
-          updateLocalRow(row.id, {
-            ...result.user,
-            role: normalizeRole(result.user.role),
-          });
-        }
+      const result = (await response.json()) as UsersResponse;
 
-        setMessage(result.message || 'User updated successfully.');
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Failed to update user.');
+      if (!response.ok || !result.ok) {
+        setMessage(result.message || 'Invite failed.');
+        setWorking(false);
+        return;
       }
-    });
+
+      setMessage(result.message || 'Invite sent.');
+      setNewEmail('');
+      setNewFullName('');
+      setNewRole('tech');
+
+      await loadUsers();
+      setWorking(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Invite failed.');
+      setWorking(false);
+    }
   }
 
-  function sendPasswordSetup(row: UserRow) {
+  async function saveUser(user: UserRow) {
     setMessage('');
+    setWorking(true);
 
-    if (!row.email) {
+    try {
+      const response = await fetch('/api/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: user.id,
+          full_name: user.full_name ?? '',
+          role: user.role,
+        }),
+      });
+
+      const result = (await response.json()) as UsersResponse;
+
+      if (!response.ok || !result.ok) {
+        setMessage(result.message || 'Save failed.');
+        setWorking(false);
+        return;
+      }
+
+      if (result.user) {
+        updateLocalUser(user.id, {
+          ...result.user,
+          role: normalizeRole(result.user.role),
+        });
+      }
+
+      setMessage(result.message || 'User saved.');
+      setWorking(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Save failed.');
+      setWorking(false);
+    }
+  }
+
+  async function sendInviteAgain(user: UserRow) {
+    if (!user.email) {
       setMessage('User email is missing.');
       return;
     }
 
-    startTransition(async () => {
-      const supabase = supabaseBrowser();
-
-      const { error } = await supabase.auth.resetPasswordForEmail(row.email!, {
-        redirectTo: `${window.location.origin}/update-password`,
-      });
-
-      if (error) {
-        setMessage(error.message);
-        return;
-      }
-
-      setMessage(`Password setup link sent to ${row.email}.`);
-    });
+    setNewEmail(user.email);
+    setNewFullName(user.full_name ?? '');
+    setNewRole(user.role);
+    setMessage('User loaded into Add User form. Click Send Invite Link.');
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {message ? (
-        <div className="rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700">
+        <div className="rounded-md border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800">
           {message}
         </div>
       ) : null}
 
-      {loading ? (
-        <div className="erp-panel p-5 text-sm text-slate-600">Loading users...</div>
-      ) : rows.length === 0 ? (
-        <div className="erp-panel p-5 text-sm text-slate-600">
-          No users found in profiles.
+      <section className="erp-panel p-4">
+        <h2 className="text-base font-semibold text-slate-900">Add User</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Enter a name, email, and role. The user will receive an invite link to complete setup.
+        </p>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <input
+            value={newFullName}
+            onChange={(event) => setNewFullName(event.target.value)}
+            placeholder="Full name"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          />
+
+          <input
+            value={newEmail}
+            onChange={(event) => setNewEmail(event.target.value)}
+            placeholder="Email"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          />
+
+          <select
+            value={newRole}
+            onChange={(event) => setNewRole(event.target.value as UserRole)}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          >
+            {ROLE_OPTIONS.map((role) => (
+              <option key={role.value} value={role.value}>
+                {role.label}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={addUser}
+            disabled={working}
+            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-70"
+          >
+            {working ? 'Sending...' : 'Send Invite Link'}
+          </button>
         </div>
-      ) : (
-        <div className="erp-panel overflow-hidden">
+      </section>
+
+      <section className="erp-panel overflow-hidden">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h2 className="text-base font-semibold text-slate-900">Existing Users</h2>
+        </div>
+
+        {loading ? (
+          <div className="p-5 text-sm text-slate-600">Loading users...</div>
+        ) : users.length === 0 ? (
+          <div className="p-5 text-sm text-slate-600">No users found.</div>
+        ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -174,25 +245,28 @@ export function UsersClient() {
                   <th className="px-4 py-3">Actions</th>
                 </tr>
               </thead>
+
               <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id} className="border-b border-slate-100 align-top">
-                    <td className="px-4 py-3 text-slate-800">{row.email || '-'}</td>
+                {users.map((user) => (
+                  <tr key={user.id} className="border-b border-slate-100 align-top">
+                    <td className="px-4 py-3 text-slate-800">{user.email || '-'}</td>
+
                     <td className="px-4 py-3">
                       <input
-                        value={row.full_name ?? ''}
+                        value={user.full_name ?? ''}
                         onChange={(event) =>
-                          updateLocalRow(row.id, { full_name: event.target.value })
+                          updateLocalUser(user.id, { full_name: event.target.value })
                         }
                         className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                         placeholder="Full name"
                       />
                     </td>
+
                     <td className="px-4 py-3">
                       <select
-                        value={row.role}
+                        value={user.role}
                         onChange={(event) =>
-                          updateLocalRow(row.id, {
+                          updateLocalUser(user.id, {
                             role: event.target.value as UserRole,
                           })
                         }
@@ -205,15 +279,17 @@ export function UsersClient() {
                         ))}
                       </select>
                     </td>
+
                     <td className="px-4 py-3 text-slate-700">
-                      {row.updated_at ? new Date(row.updated_at).toLocaleString() : '-'}
+                      {user.updated_at ? new Date(user.updated_at).toLocaleString() : '-'}
                     </td>
+
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => saveRow(row)}
-                          disabled={isPending}
+                          onClick={() => saveUser(user)}
+                          disabled={working}
                           className="rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70"
                         >
                           Save
@@ -221,11 +297,11 @@ export function UsersClient() {
 
                         <button
                           type="button"
-                          onClick={() => sendPasswordSetup(row)}
-                          disabled={isPending}
+                          onClick={() => sendInviteAgain(user)}
+                          disabled={working}
                           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70"
                         >
-                          Send Password Link
+                          Prepare Invite
                         </button>
                       </div>
                     </td>
@@ -234,8 +310,8 @@ export function UsersClient() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </section>
     </div>
   );
 }

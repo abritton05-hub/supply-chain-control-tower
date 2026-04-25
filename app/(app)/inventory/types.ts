@@ -5,6 +5,8 @@ export type InventoryRecord = {
   description: string;
   category: string | null;
   location: string | null;
+  site: string | null;
+  bin_location: string | null;
   qty_on_hand: number | null;
   reorder_point: number | null;
   is_supply?: boolean | null;
@@ -19,6 +21,8 @@ export type InventoryFormInput = {
   description: string;
   category: string;
   location: string;
+  site: string;
+  bin_location: string;
   qty_on_hand: number | null;
   reorder_point: number | null;
   is_supply: boolean;
@@ -30,6 +34,8 @@ export type InventoryImportField =
   | 'description'
   | 'category'
   | 'location'
+  | 'site'
+  | 'bin_location'
   | 'qty_on_hand'
   | 'reorder_point';
 

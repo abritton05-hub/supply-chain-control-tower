@@ -24,7 +24,7 @@ export default async function InventoryPage() {
   const { data, error } = await supabase
     .from('inventory')
     .select(
-      'id,item_id,part_number,description,category,location,qty_on_hand,reorder_point,created_at,updated_at,is_supply'
+      'id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,created_at,updated_at,is_supply'
     )
     .order('item_id', { ascending: true });
 
@@ -48,7 +48,7 @@ export default async function InventoryPage() {
     <div className="space-y-4">
       <SectionHeader
         title="Inventory"
-        subtitle="Operational stock, reorder points, and location visibility for kit support"
+        subtitle="Operational stock, reorder points, site tabs, and bin-level visibility"
       />
 
       <div className="grid gap-3 md:grid-cols-4">
@@ -62,8 +62,7 @@ export default async function InventoryPage() {
         <div className="erp-panel border-rose-200 bg-rose-50 p-5">
           <h2 className="text-base font-semibold text-rose-800">Inventory table is not ready</h2>
           <p className="mt-2 text-sm leading-6 text-rose-700">
-            Supabase returned: {error.message}. Create or update the `inventory` table using
-            `docs/supabase-inventory.sql`, then reload this page.
+            Supabase returned: {error.message}. Add the site and bin_location columns, then reload.
           </p>
         </div>
       ) : (

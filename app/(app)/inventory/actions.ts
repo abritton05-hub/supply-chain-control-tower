@@ -21,9 +21,24 @@ type ExistingInventoryMatch = {
   description: string | null;
   category: string | null;
   location: string | null;
+  site: string | null;
+  bin_location: string | null;
   qty_on_hand: number | null;
   reorder_point: number | null;
   is_supply: boolean | null;
+};
+
+type InventoryPayload = {
+  item_id: string;
+  part_number: string;
+  description: string;
+  category: string | null;
+  location: string;
+  site: string;
+  bin_location: string | null;
+  qty_on_hand: number;
+  reorder_point: number;
+  is_supply: boolean;
 };
 
 type SupabaseActionError = {
@@ -33,6 +48,16 @@ type SupabaseActionError = {
   hint?: string;
 };
 
+function normalizeSite(value: string | null | undefined) {
+  const clean = cleanInventoryText(value).toUpperCase();
+
+  if (clean === 'WH') return 'WH/A13';
+  if (clean === 'A13') return 'WH/A13';
+  if (clean === 'WH/A13') return 'WH/A13';
+
+  return clean || 'SEA991';
+}
+
 function databaseErrorMessage(context: string, error: SupabaseActionError) {
   const rawMessage = [error.message, error.details, error.hint].filter(Boolean).join(' ');
 
@@ -41,7 +66,7 @@ function databaseErrorMessage(context: string, error: SupabaseActionError) {
   }
 
   if (error.code === '42703' || rawMessage.includes('column')) {
-    return `${context}: Supabase inventory schema is missing an expected column. Apply docs/supabase-inventory.sql, then retry. Database said: ${rawMessage}`;
+    return `${context}: Supabase inventory schema is missing an expected column. Add the missing column, then retry. Database said: ${rawMessage}`;
   }
 
   if (error.code === '23505') {
@@ -64,13 +89,17 @@ async function requireInventoryWriteAccess() {
 }
 
 function normalizeManualInput(input: InventoryFormInput): InventoryImportInput {
+  const site = normalizeSite(input.site || input.location);
+
   return {
     ...input,
     item_id: input.item_id ?? '',
     part_number: input.part_number ?? '',
     description: input.description ?? '',
     category: input.category ?? '',
-    location: input.location ?? '',
+    location: site,
+    site,
+    bin_location: input.bin_location ?? '',
     qty_on_hand: input.qty_on_hand ?? null,
     reorder_point: input.reorder_point ?? null,
     is_supply: input.is_supply ?? false,
@@ -104,9 +133,14 @@ function revalidateInventoryPaths(itemIds: Iterable<string>) {
   }
 }
 
-function buildInventoryPayloadWithSupply(input: InventoryImportInput) {
+function buildInventoryPayloadWithSupply(input: InventoryImportInput): InventoryPayload {
+  const base = toInventoryPayload(input);
+
   return {
-    ...toInventoryPayload(input),
+    ...base,
+    site: normalizeSite(base.site || base.location),
+    location: normalizeSite(base.site || base.location),
+    bin_location: cleanInventoryText(base.bin_location) || null,
     is_supply: input.is_supply ?? false,
   };
 }
@@ -114,8 +148,14 @@ function buildInventoryPayloadWithSupply(input: InventoryImportInput) {
 function toInventoryUpdatePayload(
   input: InventoryImportInput,
   existing: ExistingInventoryMatch
-): ReturnType<typeof buildInventoryPayloadWithSupply> {
+): InventoryPayload {
   const proposed = buildInventoryPayloadWithSupply(input);
+
+  const site = normalizeSite(input.site || input.location || existing.site || existing.location || proposed.site);
+  const binLocation =
+    cleanInventoryText(input.bin_location) ||
+    cleanInventoryText(existing.bin_location) ||
+    cleanInventoryText(proposed.bin_location);
 
   return {
     item_id: cleanInventoryText(input.item_id) || existing.item_id || proposed.item_id,
@@ -124,7 +164,9 @@ function toInventoryUpdatePayload(
     description:
       cleanInventoryText(input.description) || existing.description || proposed.description,
     category: cleanInventoryText(input.category) || existing.category || proposed.category,
-    location: cleanInventoryText(input.location) || existing.location || proposed.location,
+    location: site,
+    site,
+    bin_location: binLocation || null,
     qty_on_hand:
       input.qty_on_hand === null || input.qty_on_hand === undefined
         ? existing.qty_on_hand ?? proposed.qty_on_hand
@@ -138,10 +180,11 @@ function toInventoryUpdatePayload(
 }
 
 async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
+  const usableRows = rows.filter((row) => !isBlankInventoryRow(row) && !validateInventoryUsability(row));
+
   const itemIds = Array.from(
     new Set(
-      rows
-        .filter((row) => !isBlankInventoryRow(row) && !validateInventoryUsability(row))
+      usableRows
         .map((row) => cleanInventoryText(row.item_id))
         .filter(Boolean)
     )
@@ -149,8 +192,7 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
 
   const partNumbers = Array.from(
     new Set(
-      rows
-        .filter((row) => !isBlankInventoryRow(row) && !validateInventoryUsability(row))
+      usableRows
         .map((row) => cleanInventoryText(row.part_number))
         .filter(Boolean)
     )
@@ -164,7 +206,7 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
   if (itemIds.length > 0) {
     const { data, error } = await supabase
       .from('inventory')
-      .select('id,item_id,part_number,description,category,location,qty_on_hand,reorder_point,is_supply')
+      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
       .in('item_id', itemIds);
 
     if (error) {
@@ -185,7 +227,7 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
   if (partNumbers.length > 0) {
     const { data, error } = await supabase
       .from('inventory')
-      .select('id,item_id,part_number,description,category,location,qty_on_hand,reorder_point,is_supply')
+      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
       .in('part_number', partNumbers);
 
     if (error) {
@@ -328,7 +370,7 @@ export async function updateInventoryItem(
 
     const { data: currentRecord, error: currentRecordError } = await supabase
       .from('inventory')
-      .select('id,item_id,part_number,description,category,location,qty_on_hand,reorder_point,is_supply')
+      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
       .eq('id', input.id)
       .maybeSingle();
 
@@ -403,7 +445,7 @@ export async function updateInventoryItem(
       return { ok: false, message: 'Inventory record was not updated. Refresh and try again.' };
     }
 
-    revalidateInventoryPaths([currentRecord.item_id, updatedRecord.item_id]);
+    revalidateInventoryPaths([(currentRecord as ExistingInventoryMatch).item_id, updatedRecord.item_id]);
 
     return { ok: true, message: 'Inventory item updated.' };
   } catch (error) {
@@ -476,6 +518,8 @@ export async function importInventoryItems(
             description: payload.description,
             category: payload.category,
             location: payload.location,
+            site: payload.site,
+            bin_location: payload.bin_location,
             qty_on_hand: payload.qty_on_hand,
             reorder_point: payload.reorder_point,
             is_supply: payload.is_supply,
@@ -496,7 +540,7 @@ export async function importInventoryItems(
         const { data, error } = await supabase
           .from('inventory')
           .insert(payload)
-          .select('id,item_id,part_number,description,category,location,qty_on_hand,reorder_point,is_supply')
+          .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
           .single();
 
         if (error) {

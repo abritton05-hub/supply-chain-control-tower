@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScanCameraButton } from '@/components/scan-camera-button';
-
 import type { InventoryRecord } from './types';
 
 type Props = {
@@ -15,11 +14,14 @@ type CountCapture = {
   item_id: string;
   part_number: string;
   description: string;
-  location: string;
+  site: string;
+  bin_location: string;
   countedQty: number;
 };
 
 type AppRole = 'admin' | 'ops_manager' | 'warehouse' | 'viewer';
+
+const LOCATION_TABS = ['SEA991', 'WH/A13', 'SEA99', 'SEA129', 'SEA133', 'SEA143'];
 
 function statusTone(status: string) {
   if (status === 'OUT') return 'bg-rose-50 text-rose-700 border-rose-200';
@@ -33,17 +35,33 @@ function getStatus(qtyOnHand: number, reorderPoint: number) {
   return 'IN STOCK';
 }
 
+function normalizeSite(value: string | null | undefined) {
+  const clean = value?.trim().toUpperCase() || '';
+
+  if (clean === 'WH') return 'WH/A13';
+  if (clean === 'A13') return 'WH/A13';
+  if (clean === 'WH/A13') return 'WH/A13';
+
+  return clean || 'SEA991';
+}
+
 function findExactInventory(inventory: InventoryRecord[], value: string) {
   const cleanValue = value.trim().toLowerCase();
   if (!cleanValue) return undefined;
 
-  return inventory.find(
-    (item) =>
+  return inventory.find((item) => {
+    const site = normalizeSite(item.site || item.location).toLowerCase();
+    const bin = item.bin_location?.toLowerCase() || '';
+
+    return (
       !(item.is_supply ?? false) &&
       (item.item_id.toLowerCase() === cleanValue ||
         item.part_number?.toLowerCase() === cleanValue ||
-        item.location?.toLowerCase() === cleanValue)
-  );
+        item.location?.toLowerCase() === cleanValue ||
+        site === cleanValue ||
+        bin === cleanValue)
+    );
+  });
 }
 
 function canEditInventory(role: AppRole) {
@@ -53,6 +71,7 @@ function canEditInventory(role: AppRole) {
 export function InventoryClient({ inventory }: Props) {
   const [role, setRole] = useState<AppRole>('viewer');
   const [query, setQuery] = useState('');
+  const [activeSite, setActiveSite] = useState('SEA991');
   const [countItem, setCountItem] = useState<InventoryRecord | null>(null);
   const [countQty, setCountQty] = useState(0);
   const [countCaptures, setCountCaptures] = useState<CountCapture[]>([]);
@@ -83,16 +102,35 @@ export function InventoryClient({ inventory }: Props) {
 
   const filteredInventory = useMemo(() => {
     const value = query.trim().toLowerCase();
-    if (!value) return inventoryOnly;
 
-    return inventoryOnly.filter((item) =>
-      `${item.item_id} ${item.part_number ?? ''} ${item.description} ${item.category ?? ''} ${
-        item.location ?? ''
-      }`
-        .toLowerCase()
-        .includes(value)
-    );
-  }, [inventoryOnly, query]);
+    return inventoryOnly.filter((item) => {
+      const site = normalizeSite(item.site || item.location);
+      const matchesSite = site === activeSite;
+
+      const searchable = `${item.item_id} ${item.part_number ?? ''} ${item.description} ${
+        item.category ?? ''
+      } ${item.location ?? ''} ${item.site ?? ''} ${item.bin_location ?? ''}`.toLowerCase();
+
+      const matchesSearch = value ? searchable.includes(value) : true;
+
+      return matchesSite && matchesSearch;
+    });
+  }, [inventoryOnly, query, activeSite]);
+
+  const siteCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const tab of LOCATION_TABS) {
+      counts.set(tab, 0);
+    }
+
+    for (const item of inventoryOnly) {
+      const site = normalizeSite(item.site || item.location);
+      counts.set(site, (counts.get(site) || 0) + 1);
+    }
+
+    return counts;
+  }, [inventoryOnly]);
 
   const canEdit = canEditInventory(role);
 
@@ -105,6 +143,7 @@ export function InventoryClient({ inventory }: Props) {
       const match = findExactInventory(inventoryOnly, scanned);
 
       if (match) {
+        setActiveSite(normalizeSite(match.site || match.location));
         setCountItem(match);
         setCountQty(match.qty_on_hand ?? 0);
         setCountMessage(`Ready to count ${match.part_number || match.item_id}.`);
@@ -129,7 +168,8 @@ export function InventoryClient({ inventory }: Props) {
         item_id: countItem.item_id,
         part_number: countItem.part_number ?? '',
         description: countItem.description,
-        location: countItem.location ?? '',
+        site: normalizeSite(countItem.site || countItem.location),
+        bin_location: countItem.bin_location ?? '',
         countedQty: countQty,
       },
       ...prev,
@@ -195,6 +235,26 @@ export function InventoryClient({ inventory }: Props) {
         </div>
       </div>
 
+      <div className="erp-panel p-3">
+        <div className="flex flex-wrap gap-2">
+          {LOCATION_TABS.map((site) => (
+            <button
+              key={site}
+              type="button"
+              onClick={() => setActiveSite(site)}
+              className={`rounded-md px-4 py-2 text-sm font-semibold ${
+                activeSite === site
+                  ? 'bg-cyan-700 text-white'
+                  : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {site}
+              <span className="ml-2 text-xs opacity-80">{siteCounts.get(site) || 0}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="erp-panel p-4 lg:hidden">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -213,7 +273,10 @@ export function InventoryClient({ inventory }: Props) {
                 {countItem.part_number || countItem.item_id}
               </div>
               <div className="mt-1 text-sm text-slate-600">{countItem.description}</div>
-              <div className="mt-2 text-xs text-slate-500">Location / Bin: {countItem.location || '-'}</div>
+              <div className="mt-2 text-xs text-slate-500">
+                Site / Bin: {normalizeSite(countItem.site || countItem.location)} /{' '}
+                {countItem.bin_location || '-'}
+              </div>
 
               <label className="mt-3 block text-sm font-medium text-slate-700">Counted Qty</label>
               <input
@@ -249,7 +312,9 @@ export function InventoryClient({ inventory }: Props) {
                     Count {capture.countedQty}
                   </div>
                 </div>
-                <div className="mt-1 text-xs text-slate-500">{capture.location || 'No location'}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {capture.site} / {capture.bin_location || 'No bin'}
+                </div>
               </div>
             ))}
           </div>
@@ -259,7 +324,7 @@ export function InventoryClient({ inventory }: Props) {
       <div className="space-y-3 lg:hidden">
         {filteredInventory.length === 0 ? (
           <div className="erp-panel p-5 text-center text-sm text-slate-500">
-            No inventory records found in Supabase.
+            No inventory records found for {activeSite}.
           </div>
         ) : (
           filteredInventory.map((item) => {
@@ -292,8 +357,10 @@ export function InventoryClient({ inventory }: Props) {
                     <div className="mt-1 text-lg font-semibold text-slate-900">{qtyOnHand}</div>
                   </div>
                   <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase text-slate-500">Location / Bin</div>
-                    <div className="mt-1 font-semibold text-slate-900">{item.location || '-'}</div>
+                    <div className="text-xs font-semibold uppercase text-slate-500">Site / Bin</div>
+                    <div className="mt-1 font-semibold text-slate-900">
+                      {normalizeSite(item.site || item.location)} / {item.bin_location || '-'}
+                    </div>
                   </div>
                 </div>
 
@@ -324,6 +391,13 @@ export function InventoryClient({ inventory }: Props) {
       </div>
 
       <div className="erp-panel hidden overflow-hidden lg:block">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h2 className="text-base font-semibold text-slate-900">{activeSite} Inventory</h2>
+          <p className="text-sm text-slate-500">
+            Showing {filteredInventory.length} item(s) for selected site.
+          </p>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -332,7 +406,8 @@ export function InventoryClient({ inventory }: Props) {
                 <th className="px-4 py-3">Part Number</th>
                 <th className="px-4 py-3">Description</th>
                 <th className="px-4 py-3">Category</th>
-                <th className="px-4 py-3">Location</th>
+                <th className="px-4 py-3">Site</th>
+                <th className="px-4 py-3">Bin</th>
                 <th className="px-4 py-3">Qty On Hand</th>
                 <th className="px-4 py-3">Reorder Point</th>
                 <th className="px-4 py-3">Status</th>
@@ -342,8 +417,8 @@ export function InventoryClient({ inventory }: Props) {
             <tbody>
               {filteredInventory.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
-                    No inventory records found in Supabase.
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    No inventory records found for {activeSite}.
                   </td>
                 </tr>
               ) : (
@@ -362,7 +437,10 @@ export function InventoryClient({ inventory }: Props) {
                       <td className="px-4 py-3 text-slate-700">{item.part_number || '-'}</td>
                       <td className="px-4 py-3 text-slate-700">{item.description}</td>
                       <td className="px-4 py-3 text-slate-700">{item.category || '-'}</td>
-                      <td className="px-4 py-3 text-slate-700">{item.location || '-'}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {normalizeSite(item.site || item.location)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{item.bin_location || '-'}</td>
                       <td className="px-4 py-3 text-slate-700">{qtyOnHand}</td>
                       <td className="px-4 py-3 text-slate-700">{reorderPoint}</td>
                       <td className="px-4 py-3">
