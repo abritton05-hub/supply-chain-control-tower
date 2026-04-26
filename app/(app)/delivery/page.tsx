@@ -161,7 +161,7 @@ export default async function DeliveryPage({
 
   return (
     <ModulePageShell
-      title="Shipping & Delivery"
+      title="Shipping"
       subtitle="BOM releases, manifests, pickups, deliveries, and saved movement history"
     >
       <DeliveryClient {...data} />
