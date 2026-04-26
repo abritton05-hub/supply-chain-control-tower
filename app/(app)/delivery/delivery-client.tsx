@@ -5,11 +5,19 @@ import { DELIVERY_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
 import type { DeliveryPageData } from './types';
 
 const DEFAULT_SITE = 'SEA991';
-
 const MANIFEST_START = 1501;
 const BOM_START = 13501;
 
 type Direction = 'incoming' | 'outgoing';
+
+type ShippingLocation = {
+  code: string;
+  display_name: string;
+  address: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  notes: string | null;
+};
 
 type StopRow = {
   id: string;
@@ -21,7 +29,9 @@ type StopRow = {
   shipmentTransferId: string;
   reference: string;
   fromLocation: string;
+  fromAddress: string;
   toLocation: string;
+  toAddress: string;
   contact: string;
   items: string;
   notes: string;
@@ -50,6 +60,16 @@ function formatType(direction: Direction) {
   return direction === 'incoming' ? 'Pickup' : 'Drop-Off';
 }
 
+function normalizeLocation(value: string) {
+  const clean = value.trim().toUpperCase();
+
+  if (clean === 'WH') return 'WH/A13';
+  if (clean === 'A13') return 'WH/A13';
+  if (clean === 'WH/A13') return 'WH/A13';
+
+  return clean;
+}
+
 function createManifestNumber(existingManifestNumbers: string[]) {
   const used = existingManifestNumbers
     .map((value) => Number(value.replace('DAI-M', '')))
@@ -68,6 +88,39 @@ function createBomNumber(existingBomNumbers: string[]) {
   return `DAI-B${next}`;
 }
 
+function addressForLocation(locations: ShippingLocation[], code: string) {
+  const normalized = normalizeLocation(code);
+  return locations.find((location) => location.code === normalized)?.address || '';
+}
+
+async function loadShippingLocations(): Promise<ShippingLocation[]> {
+  const res = await fetch('/api/shipping/locations', { cache: 'no-store' });
+  const data = await res.json();
+
+  if (!data.ok) throw new Error(data.message || 'Failed to load shipping locations.');
+
+  return data.locations || [];
+}
+
+async function saveShippingLocation(location: ShippingLocation) {
+  const res = await fetch('/api/shipping/locations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code: location.code,
+      display_name: location.display_name,
+      address: location.address || '',
+      contact_name: location.contact_name || '',
+      contact_phone: location.contact_phone || '',
+      notes: location.notes || '',
+    }),
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) throw new Error(data.message || 'Failed to save location.');
+}
+
 async function loadManifestRows(): Promise<StopRow[]> {
   const res = await fetch('/api/shipping/manifest-history', { cache: 'no-store' });
   const data = await res.json();
@@ -84,7 +137,9 @@ async function loadManifestRows(): Promise<StopRow[]> {
     shipmentTransferId: row.shipment_transfer_id || '',
     reference: row.reference || '',
     fromLocation: row.from_location || '',
+    fromAddress: row.from_address || '',
     toLocation: row.to_location || '',
+    toAddress: row.to_address || '',
     contact: row.contact || '',
     items: row.items || '',
     notes: row.notes || '',
@@ -127,7 +182,9 @@ async function saveManifestRow(row: StopRow) {
       shipment_transfer_id: row.shipmentTransferId,
       reference: row.reference,
       from_location: row.fromLocation,
+      from_address: row.fromAddress,
       to_location: row.toLocation,
+      to_address: row.toAddress,
       contact: row.contact,
       items: row.items,
       notes: row.notes,
@@ -153,7 +210,9 @@ async function updateManifestRow(row: StopRow) {
       shipment_transfer_id: row.shipmentTransferId,
       reference: row.reference,
       from_location: row.fromLocation,
+      from_address: row.fromAddress,
       to_location: row.toLocation,
+      to_address: row.toAddress,
       contact: row.contact,
       items: row.items,
       notes: row.notes,
@@ -218,13 +277,146 @@ function printElementById(id: string) {
   printWindow.print();
 }
 
+function LocationAddressBook({
+  locations,
+  onSave,
+}: {
+  locations: ShippingLocation[];
+  onSave: (location: ShippingLocation) => void;
+}) {
+  const [draftCode, setDraftCode] = useState(locations[0]?.code || 'SEA991');
+
+  const current =
+    locations.find((location) => location.code === draftCode) ||
+    ({
+      code: draftCode,
+      display_name: draftCode,
+      address: '',
+      contact_name: '',
+      contact_phone: '',
+      notes: '',
+    } satisfies ShippingLocation);
+
+  const [draft, setDraft] = useState<ShippingLocation>(current);
+
+  useEffect(() => {
+    const selected =
+      locations.find((location) => location.code === draftCode) ||
+      ({
+        code: draftCode,
+        display_name: draftCode,
+        address: '',
+        contact_name: '',
+        contact_phone: '',
+        notes: '',
+      } satisfies ShippingLocation);
+
+    setDraft(selected);
+  }, [draftCode, locations]);
+
+  function update(field: keyof ShippingLocation, value: string) {
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      [field]: value,
+    }));
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-bold text-slate-900">Location Address Book</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Save addresses here. Manifest From/To addresses auto-fill from these location codes.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-4">
+        <label className="text-sm font-semibold text-slate-700">
+          Location
+          <select
+            value={draftCode}
+            onChange={(event) => setDraftCode(event.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          >
+            {locations.map((location) => (
+              <option key={location.code} value={location.code}>
+                {location.code}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-sm font-semibold text-slate-700 md:col-span-3">
+          Display Name
+          <input
+            value={draft.display_name || ''}
+            onChange={(event) => update('display_name', event.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label className="text-sm font-semibold text-slate-700 md:col-span-4">
+          Address
+          <textarea
+            value={draft.address || ''}
+            onChange={(event) => update('address', event.target.value)}
+            className="mt-1 min-h-[80px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            placeholder="Street, city, state, zip"
+          />
+        </label>
+
+        <label className="text-sm font-semibold text-slate-700">
+          Contact Name
+          <input
+            value={draft.contact_name || ''}
+            onChange={(event) => update('contact_name', event.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label className="text-sm font-semibold text-slate-700">
+          Contact Phone
+          <input
+            value={draft.contact_phone || ''}
+            onChange={(event) => update('contact_phone', event.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label className="text-sm font-semibold text-slate-700 md:col-span-2">
+          Notes
+          <input
+            value={draft.notes || ''}
+            onChange={(event) => update('notes', event.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          />
+        </label>
+      </div>
+
+      <div className="mt-4 flex justify-end">
+        <button
+          type="button"
+          onClick={() => onSave(draft)}
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+        >
+          Save Address
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function StopModal({
   row,
+  locations,
   onClose,
   onSave,
   onCreateBom,
 }: {
   row: StopRow | null;
+  locations: ShippingLocation[];
   onClose: () => void;
   onSave: (row: StopRow) => void;
   onCreateBom: (row: StopRow) => void;
@@ -243,20 +435,43 @@ function StopModal({
     setDraft((current) => (current ? { ...current, [field]: value } : current));
   }
 
+  function updateLocation(field: 'fromLocation' | 'toLocation', value: string) {
+    const normalized = normalizeLocation(value);
+    const address = addressForLocation(locations, normalized);
+
+    setDraft((current) => {
+      if (!current) return current;
+
+      if (field === 'fromLocation') {
+        return {
+          ...current,
+          fromLocation: normalized,
+          fromAddress: address,
+        };
+      }
+
+      return {
+        ...current,
+        toLocation: normalized,
+        toAddress: address,
+      };
+    });
+  }
+
   function addBlankItemLine() {
     update('items', draft.items.trim() ? `${draft.items.trim()}\n1x ` : '1x ');
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
             <h2 className="text-lg font-bold text-slate-900">
               {formatType(draft.direction)} Details
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Manifest {draft.manifestNumber}. BOM creation is only available for drop-offs.
+              Manifest {draft.manifestNumber}. Addresses auto-fill from the address book.
             </p>
           </div>
 
@@ -304,7 +519,7 @@ function StopModal({
               type="text"
               value={draft.time}
               onChange={(event) => update('time', event.target.value)}
-              placeholder="10:30-12:00"
+              placeholder="10:30 AM-12:00 PM"
               className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             />
           </label>
@@ -329,19 +544,51 @@ function StopModal({
 
           <label className="text-sm font-semibold text-slate-700">
             From
-            <input
+            <select
               value={draft.fromLocation}
-              onChange={(event) => update('fromLocation', event.target.value)}
+              onChange={(event) => updateLocation('fromLocation', event.target.value)}
               className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            />
+            >
+              <option value="">Select location</option>
+              {locations.map((location) => (
+                <option key={location.code} value={location.code}>
+                  {location.code}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="text-sm font-semibold text-slate-700">
             To
-            <input
+            <select
               value={draft.toLocation}
-              onChange={(event) => update('toLocation', event.target.value)}
+              onChange={(event) => updateLocation('toLocation', event.target.value)}
               className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="">Select location</option>
+              {locations.map((location) => (
+                <option key={location.code} value={location.code}>
+                  {location.code}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            From Address
+            <textarea
+              value={draft.fromAddress}
+              onChange={(event) => update('fromAddress', event.target.value)}
+              className="mt-1 min-h-[90px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </label>
+
+          <label className="text-sm font-semibold text-slate-700">
+            To Address
+            <textarea
+              value={draft.toAddress}
+              onChange={(event) => update('toAddress', event.target.value)}
+              className="mt-1 min-h-[90px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             />
           </label>
 
@@ -418,11 +665,21 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
       </div>
 
       <div className="meta">
-        <div><strong>Created:</strong> {bom.createdAt}</div>
-        <div><strong>Reference:</strong> {bom.reference || '-'}</div>
-        <div><strong>Ship From:</strong> {bom.shipFrom || '-'}</div>
-        <div><strong>Ship To:</strong> {bom.shipTo || '-'}</div>
-        <div><strong>Contact / POC:</strong> {bom.contact || '-'}</div>
+        <div>
+          <strong>Created:</strong> {bom.createdAt}
+        </div>
+        <div>
+          <strong>Reference:</strong> {bom.reference || '-'}
+        </div>
+        <div>
+          <strong>Ship From:</strong> {bom.shipFrom || '-'}
+        </div>
+        <div>
+          <strong>Ship To:</strong> {bom.shipTo || '-'}
+        </div>
+        <div>
+          <strong>Contact / POC:</strong> {bom.contact || '-'}
+        </div>
       </div>
 
       <table>
@@ -461,17 +718,22 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
 
 export function DeliveryClient(_props: DeliveryPageData) {
   const [rows, setRows] = useState<StopRow[]>([]);
+  const [locations, setLocations] = useState<ShippingLocation[]>([]);
   const [selectedRow, setSelectedRow] = useState<StopRow | null>(null);
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
   const [currentManifestNumber, setCurrentManifestNumber] = useState('');
   const [message, setMessage] = useState('');
 
   async function refreshData() {
-    const manifestRows = await loadManifestRows();
-    const bomRows = await loadBomRows();
+    const [manifestRows, bomRows, shippingLocations] = await Promise.all([
+      loadManifestRows(),
+      loadBomRows(),
+      loadShippingLocations(),
+    ]);
 
     setRows(manifestRows);
     setBomDrafts(bomRows);
+    setLocations(shippingLocations);
 
     const nextManifestNumber = createManifestNumber(
       manifestRows.map((row) => row.manifestNumber).filter(Boolean)
@@ -483,8 +745,11 @@ export function DeliveryClient(_props: DeliveryPageData) {
   useEffect(() => {
     async function init() {
       try {
-        const manifestRows = await loadManifestRows();
-        const bomRows = await loadBomRows();
+        const [manifestRows, bomRows, shippingLocations] = await Promise.all([
+          loadManifestRows(),
+          loadBomRows(),
+          loadShippingLocations(),
+        ]);
 
         const rawDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
         const manifestNumber = createManifestNumber(
@@ -492,11 +757,18 @@ export function DeliveryClient(_props: DeliveryPageData) {
         );
 
         setCurrentManifestNumber(manifestNumber);
+        setLocations(shippingLocations);
 
         if (rawDraft) {
           const draft = JSON.parse(rawDraft);
           const isPickup = draft.direction === 'pickup' || draft.direction === 'incoming';
           const isDropOff = !isPickup;
+          const fromLocation = normalizeLocation(
+            draft.pickup_location || (isDropOff ? DEFAULT_SITE : '')
+          );
+          const toLocation = normalizeLocation(
+            draft.dropoff_location || (isPickup ? DEFAULT_SITE : '')
+          );
 
           const row: StopRow = {
             id: newId('intake'),
@@ -507,8 +779,10 @@ export function DeliveryClient(_props: DeliveryPageData) {
             time: draft.requested_time || '',
             shipmentTransferId: draft.shipment_transfer_id || '',
             reference: draft.project_or_work_order || '',
-            fromLocation: draft.pickup_location || (isDropOff ? DEFAULT_SITE : ''),
-            toLocation: draft.dropoff_location || (isPickup ? DEFAULT_SITE : ''),
+            fromLocation,
+            fromAddress: addressForLocation(shippingLocations, fromLocation),
+            toLocation,
+            toAddress: addressForLocation(shippingLocations, toLocation),
             contact: draft.contact_name || '',
             items: draft.items || '',
             notes: draft.notes || '',
@@ -548,16 +822,31 @@ export function DeliveryClient(_props: DeliveryPageData) {
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [rows]);
 
-  function rowsForCurrentManifest() {
-    return rows.filter((row) => row.manifestNumber === currentManifestNumber);
-  }
-
-  const currentRows = rowsForCurrentManifest();
+  const currentRows = rows.filter((row) => row.manifestNumber === currentManifestNumber);
   const pickups = currentRows.filter((row) => row.direction === 'incoming');
   const dropOffs = currentRows.filter((row) => row.direction === 'outgoing');
 
+  async function handleSaveLocation(location: ShippingLocation) {
+    try {
+      const normalizedLocation = {
+        ...location,
+        code: normalizeLocation(location.code),
+        display_name: location.display_name || normalizeLocation(location.code),
+      };
+
+      await saveShippingLocation(normalizedLocation);
+      await refreshData();
+      setMessage(`${normalizedLocation.code} address saved.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Location save failed.');
+    }
+  }
+
   async function addPickup() {
     try {
+      const fromLocation = '';
+      const toLocation = DEFAULT_SITE;
+
       const row: StopRow = {
         id: newId('pickup'),
         manifestNumber: currentManifestNumber,
@@ -567,8 +856,10 @@ export function DeliveryClient(_props: DeliveryPageData) {
         time: '',
         shipmentTransferId: '',
         reference: '',
-        fromLocation: '',
-        toLocation: DEFAULT_SITE,
+        fromLocation,
+        fromAddress: '',
+        toLocation,
+        toAddress: addressForLocation(locations, toLocation),
         contact: '',
         items: '',
         notes: '',
@@ -586,6 +877,9 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
   async function addDropOff() {
     try {
+      const fromLocation = DEFAULT_SITE;
+      const toLocation = '';
+
       const row: StopRow = {
         id: newId('dropoff'),
         manifestNumber: currentManifestNumber,
@@ -595,8 +889,10 @@ export function DeliveryClient(_props: DeliveryPageData) {
         time: '',
         shipmentTransferId: '',
         reference: '',
-        fromLocation: DEFAULT_SITE,
-        toLocation: '',
+        fromLocation,
+        fromAddress: addressForLocation(locations, fromLocation),
+        toLocation,
+        toAddress: '',
         contact: '',
         items: '',
         notes: '',
@@ -692,6 +988,8 @@ export function DeliveryClient(_props: DeliveryPageData) {
         </div>
       ) : null}
 
+      <LocationAddressBook locations={locations} onSave={handleSaveLocation} />
+
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-4 py-3">
           <h3 className="text-base font-bold text-slate-900">
@@ -715,7 +1013,9 @@ export function DeliveryClient(_props: DeliveryPageData) {
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Time / Window</th>
                   <th className="px-4 py-3">From</th>
+                  <th className="px-4 py-3">From Address</th>
                   <th className="px-4 py-3">To</th>
+                  <th className="px-4 py-3">To Address</th>
                   <th className="px-4 py-3">PO / Shipment</th>
                   <th className="px-4 py-3">Contact</th>
                   <th className="px-4 py-3">Items</th>
@@ -735,7 +1035,13 @@ export function DeliveryClient(_props: DeliveryPageData) {
                     <td className="px-4 py-3">{row.date || '-'}</td>
                     <td className="px-4 py-3">{row.time || '-'}</td>
                     <td className="px-4 py-3">{row.fromLocation || '-'}</td>
+                    <td className="max-w-xs whitespace-pre-line px-4 py-3 text-xs">
+                      {row.fromAddress || '-'}
+                    </td>
                     <td className="px-4 py-3">{row.toLocation || '-'}</td>
+                    <td className="max-w-xs whitespace-pre-line px-4 py-3 text-xs">
+                      {row.toAddress || '-'}
+                    </td>
                     <td className="px-4 py-3">{row.shipmentTransferId || '-'}</td>
                     <td className="px-4 py-3">{row.contact || '-'}</td>
                     <td className="whitespace-pre-line px-4 py-3 font-mono">{row.items || '-'}</td>
@@ -846,6 +1152,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
       <StopModal
         row={selectedRow}
+        locations={locations}
         onClose={() => setSelectedRow(null)}
         onSave={saveRow}
         onCreateBom={createBomFromDropOff}
