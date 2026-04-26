@@ -1,7 +1,7 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { DELIVERY_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
 import type { DeliveryPageData } from './types';
 
 const DEFAULT_SITE = 'SEA991';
@@ -52,12 +52,12 @@ type BomDraft = {
   notes: string;
 };
 
-function newId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+function today() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-function formatType(direction: Direction) {
-  return direction === 'incoming' ? 'Pickup' : 'Drop-Off';
+function newId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function normalizeLocation(value: string) {
@@ -70,9 +70,24 @@ function normalizeLocation(value: string) {
   return clean;
 }
 
+function locationOptionLabel(location: ShippingLocation) {
+  const code = normalizeLocation(location.code || '');
+  const displayName = (location.display_name || '').trim();
+
+  if (!displayName || normalizeLocation(displayName) === code) {
+    return code;
+  }
+
+  return `${code} — ${displayName}`;
+}
+
+function formatType(direction: Direction) {
+  return direction === 'incoming' ? 'Pickup' : 'Drop Off';
+}
+
 function createManifestNumber(existingManifestNumbers: string[]) {
   const used = existingManifestNumbers
-    .map((value) => Number(value.replace('DAI-M', '')))
+    .map((value) => Number(value.replace('DAI-M', '').replace('DAI-M-', '')))
     .filter((value) => Number.isFinite(value));
 
   const next = used.length ? Math.max(...used) + 1 : MANIFEST_START;
@@ -81,7 +96,7 @@ function createManifestNumber(existingManifestNumbers: string[]) {
 
 function createBomNumber(existingBomNumbers: string[]) {
   const used = existingBomNumbers
-    .map((value) => Number(value.replace('DAI-B', '')))
+    .map((value) => Number(value.replace('DAI-B', '').replace('DAI-B-', '')))
     .filter((value) => Number.isFinite(value));
 
   const next = used.length ? Math.max(...used) + 1 : BOM_START;
@@ -90,7 +105,59 @@ function createBomNumber(existingBomNumbers: string[]) {
 
 function addressForLocation(locations: ShippingLocation[], code: string) {
   const normalized = normalizeLocation(code);
-  return locations.find((location) => location.code === normalized)?.address || '';
+  return (
+    locations.find((location) => normalizeLocation(location.code) === normalized)?.address || ''
+  );
+}
+
+function contactForLocation(locations: ShippingLocation[], code: string) {
+  const normalized = normalizeLocation(code);
+  const location = locations.find((item) => normalizeLocation(item.code) === normalized);
+
+  if (!location) return '';
+
+  return [location.contact_name || '', location.contact_phone || ''].filter(Boolean).join(' | ');
+}
+
+function displayStopAddress(location: string, address: string) {
+  const cleanLocation = location.trim();
+  const cleanAddress = address.trim();
+
+  if (!cleanLocation && !cleanAddress) return '-';
+  if (!cleanAddress) return cleanLocation;
+  if (!cleanLocation) return cleanAddress;
+
+  return `${cleanLocation}\n${cleanAddress}`;
+}
+
+function emptyStop(
+  direction: Direction,
+  manifestNumber: string,
+  locations: ShippingLocation[]
+): StopRow {
+  const isPickup = direction === 'incoming';
+  const fromLocation = isPickup ? '' : DEFAULT_SITE;
+  const toLocation = isPickup ? DEFAULT_SITE : '';
+
+  return {
+    id: newId(isPickup ? 'pickup' : 'dropoff'),
+    manifestNumber,
+    direction,
+    title: isPickup ? 'Pickup' : 'Drop Off',
+    date: today(),
+    time: '',
+    shipmentTransferId: '',
+    reference: '',
+    fromLocation,
+    fromAddress: fromLocation ? addressForLocation(locations, fromLocation) : '',
+    toLocation,
+    toAddress: toLocation ? addressForLocation(locations, toLocation) : '',
+    contact: isPickup ? '' : contactForLocation(locations, toLocation),
+    items: '',
+    notes: '',
+    status: 'Manual',
+    createdAt: new Date().toISOString(),
+  };
 }
 
 async function loadShippingLocations(): Promise<ShippingLocation[]> {
@@ -100,25 +167,6 @@ async function loadShippingLocations(): Promise<ShippingLocation[]> {
   if (!data.ok) throw new Error(data.message || 'Failed to load shipping locations.');
 
   return data.locations || [];
-}
-
-async function saveShippingLocation(location: ShippingLocation) {
-  const res = await fetch('/api/shipping/locations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      code: location.code,
-      display_name: location.display_name,
-      address: location.address || '',
-      contact_name: location.contact_name || '',
-      contact_phone: location.contact_phone || '',
-      notes: location.notes || '',
-    }),
-  });
-
-  const data = await res.json();
-
-  if (!data.ok) throw new Error(data.message || 'Failed to save location.');
 }
 
 async function loadManifestRows(): Promise<StopRow[]> {
@@ -131,7 +179,7 @@ async function loadManifestRows(): Promise<StopRow[]> {
     id: row.id,
     manifestNumber: row.manifest_number || '',
     direction: row.direction,
-    title: row.title,
+    title: row.title || (row.direction === 'incoming' ? 'Pickup' : 'Drop Off'),
     date: row.stop_date || '',
     time: row.stop_time || '',
     shipmentTransferId: row.shipment_transfer_id || '',
@@ -155,7 +203,7 @@ async function loadBomRows(): Promise<BomDraft[]> {
   if (!data.ok) throw new Error(data.message || 'Failed to load BOM history.');
 
   return (data.rows || []).map((row: any) => ({
-    bomNumber: row.bom_number,
+    bomNumber: row.bom_number || '',
     manifestNumber: row.manifest_number || '',
     sourceStopId: row.source_stop_id || '',
     createdAt: row.created_at || '',
@@ -249,7 +297,7 @@ function printElementById(id: string) {
   const element = document.getElementById(id);
   if (!element) return;
 
-  const printWindow = window.open('', '_blank', 'width=900,height=700');
+  const printWindow = window.open('', '_blank', 'width=1000,height=800');
   if (!printWindow) return;
 
   printWindow.document.write(`
@@ -266,6 +314,8 @@ function printElementById(id: string) {
           .meta { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
           .box { border: 1px solid #cbd5e1; padding: 10px; margin-top: 12px; }
           pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 13px; }
+          .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px; }
+          .signature-line { border-bottom: 1px solid #0f172a; height: 28px; }
         </style>
       </head>
       <body>${element.innerHTML}</body>
@@ -275,137 +325,6 @@ function printElementById(id: string) {
   printWindow.document.close();
   printWindow.focus();
   printWindow.print();
-}
-
-function LocationAddressBook({
-  locations,
-  onSave,
-}: {
-  locations: ShippingLocation[];
-  onSave: (location: ShippingLocation) => void;
-}) {
-  const [draftCode, setDraftCode] = useState(locations[0]?.code || 'SEA991');
-
-  const current =
-    locations.find((location) => location.code === draftCode) ||
-    ({
-      code: draftCode,
-      display_name: draftCode,
-      address: '',
-      contact_name: '',
-      contact_phone: '',
-      notes: '',
-    } satisfies ShippingLocation);
-
-  const [draft, setDraft] = useState<ShippingLocation>(current);
-
-  useEffect(() => {
-    const selected =
-      locations.find((location) => location.code === draftCode) ||
-      ({
-        code: draftCode,
-        display_name: draftCode,
-        address: '',
-        contact_name: '',
-        contact_phone: '',
-        notes: '',
-      } satisfies ShippingLocation);
-
-    setDraft(selected);
-  }, [draftCode, locations]);
-
-  function update(field: keyof ShippingLocation, value: string) {
-    setDraft((currentDraft) => ({
-      ...currentDraft,
-      [field]: value,
-    }));
-  }
-
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-bold text-slate-900">Location Address Book</h3>
-          <p className="mt-1 text-sm text-slate-500">
-            Save addresses here. Manifest From/To addresses auto-fill from these location codes.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-4 md:grid-cols-4">
-        <label className="text-sm font-semibold text-slate-700">
-          Location
-          <select
-            value={draftCode}
-            onChange={(event) => setDraftCode(event.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            {locations.map((location) => (
-              <option key={location.code} value={location.code}>
-                {location.code}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="text-sm font-semibold text-slate-700 md:col-span-3">
-          Display Name
-          <input
-            value={draft.display_name || ''}
-            onChange={(event) => update('display_name', event.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label className="text-sm font-semibold text-slate-700 md:col-span-4">
-          Address
-          <textarea
-            value={draft.address || ''}
-            onChange={(event) => update('address', event.target.value)}
-            className="mt-1 min-h-[80px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            placeholder="Street, city, state, zip"
-          />
-        </label>
-
-        <label className="text-sm font-semibold text-slate-700">
-          Contact Name
-          <input
-            value={draft.contact_name || ''}
-            onChange={(event) => update('contact_name', event.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label className="text-sm font-semibold text-slate-700">
-          Contact Phone
-          <input
-            value={draft.contact_phone || ''}
-            onChange={(event) => update('contact_phone', event.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label className="text-sm font-semibold text-slate-700 md:col-span-2">
-          Notes
-          <input
-            value={draft.notes || ''}
-            onChange={(event) => update('notes', event.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          />
-        </label>
-      </div>
-
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          onClick={() => onSave(draft)}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          Save Address
-        </button>
-      </div>
-    </section>
-  );
 }
 
 function StopModal({
@@ -438,6 +357,7 @@ function StopModal({
   function updateLocation(field: 'fromLocation' | 'toLocation', value: string) {
     const normalized = normalizeLocation(value);
     const address = addressForLocation(locations, normalized);
+    const contact = contactForLocation(locations, normalized);
 
     setDraft((current) => {
       if (!current) return current;
@@ -447,6 +367,7 @@ function StopModal({
           ...current,
           fromLocation: normalized,
           fromAddress: address,
+          contact: current.direction === 'incoming' ? contact || current.contact : current.contact,
         };
       }
 
@@ -454,6 +375,7 @@ function StopModal({
         ...current,
         toLocation: normalized,
         toAddress: address,
+        contact: current.direction === 'outgoing' ? contact || current.contact : current.contact,
       };
     });
   }
@@ -463,22 +385,23 @@ function StopModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 print:hidden">
+      <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">
+            <h2 className="text-xl font-bold text-slate-950">
               {formatType(draft.direction)} Details
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Manifest {draft.manifestNumber}. Addresses auto-fill from the address book.
+              Manifest {draft.manifestNumber}. Pick an address book code or type the address
+              manually.
             </p>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-slate-300 px-3 py-1 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
           >
             Close
           </button>
@@ -490,7 +413,7 @@ function StopModal({
             <input
               value={draft.manifestNumber}
               readOnly
-              className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm text-slate-700"
             />
           </label>
 
@@ -499,7 +422,7 @@ function StopModal({
             <input
               value={draft.title}
               onChange={(event) => update('title', event.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             />
           </label>
 
@@ -509,7 +432,7 @@ function StopModal({
               type="date"
               value={draft.date}
               onChange={(event) => update('date', event.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             />
           </label>
 
@@ -520,7 +443,7 @@ function StopModal({
               value={draft.time}
               onChange={(event) => update('time', event.target.value)}
               placeholder="10:30 AM-12:00 PM"
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             />
           </label>
 
@@ -529,16 +452,16 @@ function StopModal({
             <input
               value={draft.shipmentTransferId}
               onChange={(event) => update('shipmentTransferId', event.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             />
           </label>
 
           <label className="text-sm font-semibold text-slate-700">
-            Reference
+            Reference / Project
             <input
               value={draft.reference}
               onChange={(event) => update('reference', event.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             />
           </label>
 
@@ -547,12 +470,12 @@ function StopModal({
             <select
               value={draft.fromLocation}
               onChange={(event) => updateLocation('fromLocation', event.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             >
-              <option value="">Select location</option>
+              <option value="">Manual / Select location</option>
               {locations.map((location) => (
                 <option key={location.code} value={location.code}>
-                  {location.code}
+                  {locationOptionLabel(location)}
                 </option>
               ))}
             </select>
@@ -563,12 +486,12 @@ function StopModal({
             <select
               value={draft.toLocation}
               onChange={(event) => updateLocation('toLocation', event.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             >
-              <option value="">Select location</option>
+              <option value="">Manual / Select location</option>
               {locations.map((location) => (
                 <option key={location.code} value={location.code}>
-                  {location.code}
+                  {locationOptionLabel(location)}
                 </option>
               ))}
             </select>
@@ -579,7 +502,7 @@ function StopModal({
             <textarea
               value={draft.fromAddress}
               onChange={(event) => update('fromAddress', event.target.value)}
-              className="mt-1 min-h-[90px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 min-h-[96px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             />
           </label>
 
@@ -588,7 +511,7 @@ function StopModal({
             <textarea
               value={draft.toAddress}
               onChange={(event) => update('toAddress', event.target.value)}
-              className="mt-1 min-h-[90px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 min-h-[96px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             />
           </label>
 
@@ -597,17 +520,20 @@ function StopModal({
             <input
               value={draft.contact}
               onChange={(event) => update('contact', event.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              placeholder="Only use when there is a real name or phone number"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
             />
           </label>
 
           <div className="md:col-span-2">
             <div className="flex items-center justify-between gap-3">
-              <label className="text-sm font-semibold text-slate-700">Items</label>
+              <label className="text-sm font-semibold text-slate-700">
+                Items / PN / Qty
+              </label>
               <button
                 type="button"
                 onClick={addBlankItemLine}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
               >
                 Add Item Line
               </button>
@@ -616,7 +542,8 @@ function StopModal({
             <textarea
               value={draft.items || ''}
               onChange={(event) => update('items', event.target.value)}
-              className="mt-1 min-h-[140px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
+              placeholder="5x 150619-071&#10;5x 150619-003"
+              className="mt-1 min-h-[150px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
               spellCheck={false}
             />
           </div>
@@ -626,7 +553,7 @@ function StopModal({
             <textarea
               value={draft.notes || ''}
               onChange={(event) => update('notes', event.target.value)}
-              className="mt-1 min-h-[110px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-1 min-h-[100px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             />
           </label>
         </div>
@@ -635,7 +562,7 @@ function StopModal({
           <button
             type="button"
             onClick={() => onSave(draft)}
-            className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
+            className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
           >
             Save Changes
           </button>
@@ -644,7 +571,7 @@ function StopModal({
             <button
               type="button"
               onClick={() => onCreateBom(draft)}
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+              className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
             >
               Create BOM
             </button>
@@ -659,7 +586,8 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
   return (
     <div id={`print-bom-${bom.bomNumber}`} className="hidden">
       <div className="header">
-        <h1>BOM / Release</h1>
+        <h1>DENALI ADVANCED INTEGRATION</h1>
+        <h2>BOM / Release</h2>
         <p>BOM #: {bom.bomNumber}</p>
         <p>Manifest #: {bom.manifestNumber}</p>
       </div>
@@ -686,7 +614,7 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
         <thead>
           <tr>
             <th>Line</th>
-            <th>Item</th>
+            <th>Item / PN / Qty</th>
           </tr>
         </thead>
         <tbody>
@@ -707,10 +635,96 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
         <pre>{bom.notes || '-'}</pre>
       </div>
 
-      <div className="box">
-        <strong>Signatures</strong>
-        <p>Authorized for Release: __________________________ Date: __________</p>
-        <p>Released To: __________________________ Signature: __________</p>
+      <div className="signature-grid">
+        <div>
+          <strong>Authorized for Release</strong>
+          <div className="signature-line" />
+        </div>
+        <div>
+          <strong>Date / Time</strong>
+          <div className="signature-line" />
+        </div>
+        <div>
+          <strong>Released To</strong>
+          <div className="signature-line" />
+        </div>
+        <div>
+          <strong>Signature</strong>
+          <div className="signature-line" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrintableManifest({ manifestNumber, rows }: { manifestNumber: string; rows: StopRow[] }) {
+  return (
+    <div id={`print-manifest-${manifestNumber}`} className="hidden">
+      <div className="header">
+        <h1>DENALI ADVANCED INTEGRATION</h1>
+        <h2>Driver Manifest</h2>
+        <p>Manifest #: {manifestNumber}</p>
+        <p>Date: {today()}</p>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Date / Time</th>
+            <th>From</th>
+            <th>To</th>
+            <th>PO / Ref</th>
+            <th>Items</th>
+            <th>Contact</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`print-${row.id}`}>
+              <td>{formatType(row.direction)}</td>
+              <td>
+                {row.date || '-'}
+                <br />
+                {row.time || '-'}
+              </td>
+              <td>
+                <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
+              </td>
+              <td>
+                <pre>{displayStopAddress(row.toLocation, row.toAddress)}</pre>
+              </td>
+              <td>
+                {row.shipmentTransferId || '-'}
+                <br />
+                {row.reference || ''}
+              </td>
+              <td>
+                <pre>{row.items || '-'}</pre>
+              </td>
+              <td>{row.contact || '-'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="signature-grid">
+        <div>
+          <strong>Driver Name</strong>
+          <div className="signature-line" />
+        </div>
+        <div>
+          <strong>Date / Time</strong>
+          <div className="signature-line" />
+        </div>
+        <div>
+          <strong>Released By</strong>
+          <div className="signature-line" />
+        </div>
+        <div>
+          <strong>Receiver Signature</strong>
+          <div className="signature-line" />
+        </div>
       </div>
     </div>
   );
@@ -723,6 +737,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
   const [currentManifestNumber, setCurrentManifestNumber] = useState('');
   const [message, setMessage] = useState('');
+  const [loadingLabel, setLoadingLabel] = useState('');
 
   async function refreshData() {
     const [manifestRows, bomRows, shippingLocations] = await Promise.all([
@@ -745,69 +760,21 @@ export function DeliveryClient(_props: DeliveryPageData) {
   useEffect(() => {
     async function init() {
       try {
-        const [manifestRows, bomRows, shippingLocations] = await Promise.all([
-          loadManifestRows(),
-          loadBomRows(),
-          loadShippingLocations(),
-        ]);
-
-        const rawDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
-        const manifestNumber = createManifestNumber(
-          manifestRows.map((row) => row.manifestNumber).filter(Boolean)
-        );
-
-        setCurrentManifestNumber(manifestNumber);
-        setLocations(shippingLocations);
-
-        if (rawDraft) {
-          const draft = JSON.parse(rawDraft);
-          const isPickup = draft.direction === 'pickup' || draft.direction === 'incoming';
-          const isDropOff = !isPickup;
-          const fromLocation = normalizeLocation(
-            draft.pickup_location || (isDropOff ? DEFAULT_SITE : '')
-          );
-          const toLocation = normalizeLocation(
-            draft.dropoff_location || (isPickup ? DEFAULT_SITE : '')
-          );
-
-          const row: StopRow = {
-            id: newId('intake'),
-            manifestNumber,
-            direction: isPickup ? 'incoming' : 'outgoing',
-            title: isPickup ? 'Pickup' : 'Drop-Off',
-            date: draft.requested_date || new Date().toISOString().slice(0, 10),
-            time: draft.requested_time || '',
-            shipmentTransferId: draft.shipment_transfer_id || '',
-            reference: draft.project_or_work_order || '',
-            fromLocation,
-            fromAddress: addressForLocation(shippingLocations, fromLocation),
-            toLocation,
-            toAddress: addressForLocation(shippingLocations, toLocation),
-            contact: draft.contact_name || '',
-            items: draft.items || '',
-            notes: draft.notes || '',
-            status: 'Draft',
-            createdAt: new Date().toISOString(),
-          };
-
-          await saveManifestRow(row);
-          window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
-          setMessage(`Transaction recorded under manifest ${manifestNumber}.`);
-
-          const nextRows = await loadManifestRows();
-          setRows(nextRows);
-        } else {
-          setRows(manifestRows);
-        }
-
-        setBomDrafts(bomRows);
+        setLoadingLabel('Loading shipping and delivery records...');
+        await refreshData();
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'Shipping data failed to load.');
+      } finally {
+        setLoadingLabel('');
       }
     }
 
     init();
   }, []);
+
+  const currentRows = rows.filter((row) => row.manifestNumber === currentManifestNumber);
+  const pickups = currentRows.filter((row) => row.direction === 'incoming');
+  const dropOffs = currentRows.filter((row) => row.direction === 'outgoing');
 
   const groupedManifests = useMemo(() => {
     const groups = new Map<string, StopRow[]>();
@@ -822,343 +789,357 @@ export function DeliveryClient(_props: DeliveryPageData) {
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [rows]);
 
-  const currentRows = rows.filter((row) => row.manifestNumber === currentManifestNumber);
-  const pickups = currentRows.filter((row) => row.direction === 'incoming');
-  const dropOffs = currentRows.filter((row) => row.direction === 'outgoing');
-
-  async function handleSaveLocation(location: ShippingLocation) {
+  async function addStop(direction: Direction) {
     try {
-      const normalizedLocation = {
-        ...location,
-        code: normalizeLocation(location.code),
-        display_name: location.display_name || normalizeLocation(location.code),
-      };
+      const manifestNumber = currentManifestNumber || createManifestNumber([]);
+      const row = emptyStop(direction, manifestNumber, locations);
 
-      await saveShippingLocation(normalizedLocation);
-      await refreshData();
-      setMessage(`${normalizedLocation.code} address saved.`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Location save failed.');
-    }
-  }
-
-  async function addPickup() {
-    try {
-      const fromLocation = '';
-      const toLocation = DEFAULT_SITE;
-
-      const row: StopRow = {
-        id: newId('pickup'),
-        manifestNumber: currentManifestNumber,
-        direction: 'incoming',
-        title: 'Pickup',
-        date: new Date().toISOString().slice(0, 10),
-        time: '',
-        shipmentTransferId: '',
-        reference: '',
-        fromLocation,
-        fromAddress: '',
-        toLocation,
-        toAddress: addressForLocation(locations, toLocation),
-        contact: '',
-        items: '',
-        notes: '',
-        status: 'Manual',
-        createdAt: new Date().toISOString(),
-      };
-
+      setLoadingLabel(`Creating ${formatType(direction)}...`);
       await saveManifestRow(row);
       await refreshData();
-      setMessage(`Pickup recorded under manifest ${currentManifestNumber}.`);
+      setSelectedRow(row);
+      setMessage(`${formatType(direction)} recorded under manifest ${manifestNumber}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Pickup save failed.');
+      setMessage(error instanceof Error ? error.message : `${formatType(direction)} save failed.`);
+    } finally {
+      setLoadingLabel('');
     }
   }
 
-  async function addDropOff() {
+  async function handleSaveRow(row: StopRow) {
     try {
-      const fromLocation = DEFAULT_SITE;
-      const toLocation = '';
-
-      const row: StopRow = {
-        id: newId('dropoff'),
-        manifestNumber: currentManifestNumber,
-        direction: 'outgoing',
-        title: 'Drop-Off',
-        date: new Date().toISOString().slice(0, 10),
-        time: '',
-        shipmentTransferId: '',
-        reference: '',
-        fromLocation,
-        fromAddress: addressForLocation(locations, fromLocation),
-        toLocation,
-        toAddress: '',
-        contact: '',
-        items: '',
-        notes: '',
-        status: 'Manual',
-        createdAt: new Date().toISOString(),
-      };
-
-      await saveManifestRow(row);
-      await refreshData();
-      setMessage(`Drop-off recorded under manifest ${currentManifestNumber}.`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Drop-off save failed.');
-    }
-  }
-
-  async function saveRow(updated: StopRow) {
-    try {
-      await updateManifestRow(updated);
+      setLoadingLabel('Saving manifest stop...');
+      await updateManifestRow(row);
       await refreshData();
       setSelectedRow(null);
-      setMessage(`Transaction updated under manifest ${updated.manifestNumber}.`);
+      setMessage(`${formatType(row.direction)} saved.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Transaction update failed.');
+      setMessage(error instanceof Error ? error.message : 'Save failed.');
+    } finally {
+      setLoadingLabel('');
     }
   }
 
-  async function createBomFromDropOff(row: StopRow) {
+  async function handleCreateBom(row: StopRow) {
     try {
-      if (row.direction !== 'outgoing') return;
+      const bomNumber = createBomNumber(bomDrafts.map((bom) => bom.bomNumber).filter(Boolean));
 
       const bom: BomDraft = {
-        bomNumber: createBomNumber(bomDrafts.map((existing) => existing.bomNumber)),
+        bomNumber,
         manifestNumber: row.manifestNumber,
         sourceStopId: row.id,
         createdAt: new Date().toISOString(),
-        reference: row.shipmentTransferId || row.reference,
-        shipFrom: row.fromLocation,
-        shipTo: row.toLocation,
+        reference: row.reference || row.shipmentTransferId,
+        shipFrom: displayStopAddress(row.fromLocation, row.fromAddress),
+        shipTo: displayStopAddress(row.toLocation, row.toAddress),
         contact: row.contact,
         items: row.items,
         notes: row.notes,
       };
 
+      setLoadingLabel('Creating BOM...');
       await saveBomRow(bom);
       await refreshData();
-      setSelectedRow(null);
-      setMessage(`BOM ${bom.bomNumber} recorded under manifest ${row.manifestNumber}.`);
+      setMessage(`BOM ${bomNumber} created.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'BOM save failed.');
+      setMessage(error instanceof Error ? error.message : 'BOM creation failed.');
+    } finally {
+      setLoadingLabel('');
     }
   }
 
+  const allCurrentRows = [...pickups, ...dropOffs];
+
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Daily Manifest</h2>
-          <p className="text-sm text-slate-500">
-            Current manifest: <span className="font-semibold">{currentManifestNumber || '-'}</span>
-          </p>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={addPickup}
-            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
-          >
-            Add Pickup
-          </button>
-
-          <button
-            type="button"
-            onClick={addDropOff}
-            className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800"
-          >
-            Add Drop-Off
-          </button>
-
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            Print Manifest
-          </button>
-        </div>
-      </div>
-
-      {message ? (
-        <div className="rounded-md border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800 print:hidden">
-          {message}
+    <div className="space-y-4">
+      {loadingLabel ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40">
+          <div className="rounded-2xl border border-slate-200 bg-white px-6 py-4 text-sm font-bold text-slate-800 shadow-2xl">
+            {loadingLabel}
+          </div>
         </div>
       ) : null}
 
-      <LocationAddressBook locations={locations} onSave={handleSaveLocation} />
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-950">Shipping & Delivery Control</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Manual pickups, drop offs, manifest history, and BOM release paperwork.
+            </p>
+          </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-4 py-3">
-          <h3 className="text-base font-bold text-slate-900">
-            Manifest {currentManifestNumber || '-'}
-          </h3>
-          <p className="text-sm text-slate-500">
-            Pickups: {pickups.length} | Drop-Offs: {dropOffs.length}
-          </p>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/address-book"
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Address Book
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => addStop('incoming')}
+              className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
+            >
+              Add Pickup
+            </button>
+
+            <button
+              type="button"
+              onClick={() => addStop('outgoing')}
+              className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+            >
+              Add Drop Off
+            </button>
+
+            <button
+              type="button"
+              onClick={() => printElementById(`print-manifest-${currentManifestNumber}`)}
+              disabled={!allCurrentRows.length}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Print Manifest
+            </button>
+          </div>
         </div>
 
-        {currentRows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">No stops recorded yet.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+        {message ? (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+            {message}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-4 print:hidden">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+            Current Manifest
+          </div>
+          <div className="mt-2 text-2xl font-bold text-slate-950">
+            {currentManifestNumber || 'Loading'}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+            Pickups
+          </div>
+          <div className="mt-2 text-2xl font-bold text-slate-950">{pickups.length}</div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+            Drop Offs
+          </div>
+          <div className="mt-2 text-2xl font-bold text-slate-950">{dropOffs.length}</div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+            Saved BOMs
+          </div>
+          <div className="mt-2 text-2xl font-bold text-slate-950">{bomDrafts.length}</div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="text-base font-bold text-slate-950">Pickups</h3>
+          <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
                 <tr>
-                  <th className="px-4 py-3">Manifest #</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Record</th>
-                  <th className="px-4 py-3">Date</th>
-                  <th className="px-4 py-3">Time / Window</th>
-                  <th className="px-4 py-3">From</th>
-                  <th className="px-4 py-3">From Address</th>
-                  <th className="px-4 py-3">To</th>
-                  <th className="px-4 py-3">To Address</th>
-                  <th className="px-4 py-3">PO / Shipment</th>
-                  <th className="px-4 py-3">Contact</th>
-                  <th className="px-4 py-3">Items</th>
+                  <th className="px-3 py-3">Date</th>
+                  <th className="px-3 py-3">From</th>
+                  <th className="px-3 py-3">PO / Ref</th>
+                  <th className="px-3 py-3">Items</th>
+                  <th className="px-3 py-3 text-right">Action</th>
                 </tr>
               </thead>
-
-              <tbody>
-                {currentRows.map((row) => (
-                  <tr
-                    key={row.id}
-                    onClick={() => setSelectedRow(row)}
-                    className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
-                  >
-                    <td className="px-4 py-3 font-semibold">{row.manifestNumber}</td>
-                    <td className="px-4 py-3 font-semibold">{formatType(row.direction)}</td>
-                    <td className="px-4 py-3 font-semibold text-cyan-700">{row.title}</td>
-                    <td className="px-4 py-3">{row.date || '-'}</td>
-                    <td className="px-4 py-3">{row.time || '-'}</td>
-                    <td className="px-4 py-3">{row.fromLocation || '-'}</td>
-                    <td className="max-w-xs whitespace-pre-line px-4 py-3 text-xs">
-                      {row.fromAddress || '-'}
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {pickups.length ? (
+                  pickups.map((row) => (
+                    <tr key={row.id} className="align-top hover:bg-slate-50">
+                      <td className="px-3 py-3">{row.date || '-'}</td>
+                      <td className="px-3 py-3 whitespace-pre-line">
+                        {displayStopAddress(row.fromLocation, row.fromAddress)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div>{row.shipmentTransferId || '-'}</div>
+                        <div className="text-xs text-slate-500">{row.reference || ''}</div>
+                      </td>
+                      <td className="px-3 py-3 whitespace-pre-line">{row.items || '-'}</td>
+                      <td className="px-3 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRow(row)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Open
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
+                      No pickups on the current manifest.
                     </td>
-                    <td className="px-4 py-3">{row.toLocation || '-'}</td>
-                    <td className="max-w-xs whitespace-pre-line px-4 py-3 text-xs">
-                      {row.toAddress || '-'}
-                    </td>
-                    <td className="px-4 py-3">{row.shipmentTransferId || '-'}</td>
-                    <td className="px-4 py-3">{row.contact || '-'}</td>
-                    <td className="whitespace-pre-line px-4 py-3 font-mono">{row.items || '-'}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
-        )}
-      </section>
+        </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-        <h3 className="text-base font-bold text-slate-900">Manifest History</h3>
-
-        {groupedManifests.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500">No manifests recorded yet.</p>
-        ) : (
-          <div className="mt-3 space-y-3">
-            {groupedManifests.map(([manifestNumber, manifestRows]) => {
-              const manifestPickups = manifestRows.filter((row) => row.direction === 'incoming');
-              const manifestDropOffs = manifestRows.filter((row) => row.direction === 'outgoing');
-
-              return (
-                <div key={manifestNumber} className="rounded-lg border border-slate-200 p-4">
-                  <div className="font-bold text-slate-900">{manifestNumber}</div>
-                  <div className="mt-1 text-sm text-slate-600">
-                    Pickups: {manifestPickups.length} | Drop-Offs: {manifestDropOffs.length}
-                  </div>
-
-                  <div className="mt-3 overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
-                      <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
-                        <tr>
-                          <th className="px-3 py-2">Type</th>
-                          <th className="px-3 py-2">From</th>
-                          <th className="px-3 py-2">To</th>
-                          <th className="px-3 py-2">Items</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {manifestRows.map((row) => (
-                          <tr
-                            key={`history-${row.id}`}
-                            onClick={() => setSelectedRow(row)}
-                            className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
-                          >
-                            <td className="px-3 py-2">{formatType(row.direction)}</td>
-                            <td className="px-3 py-2">{row.fromLocation || '-'}</td>
-                            <td className="px-3 py-2">{row.toLocation || '-'}</td>
-                            <td className="whitespace-pre-line px-3 py-2 font-mono">
-                              {row.items || '-'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              );
-            })}
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="text-base font-bold text-slate-950">Drop Offs</h3>
+          <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-3 py-3">Date</th>
+                  <th className="px-3 py-3">To</th>
+                  <th className="px-3 py-3">PO / Ref</th>
+                  <th className="px-3 py-3">Items</th>
+                  <th className="px-3 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {dropOffs.length ? (
+                  dropOffs.map((row) => (
+                    <tr key={row.id} className="align-top hover:bg-slate-50">
+                      <td className="px-3 py-3">{row.date || '-'}</td>
+                      <td className="px-3 py-3 whitespace-pre-line">
+                        {displayStopAddress(row.toLocation, row.toAddress)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div>{row.shipmentTransferId || '-'}</div>
+                        <div className="text-xs text-slate-500">{row.reference || ''}</div>
+                      </td>
+                      <td className="px-3 py-3 whitespace-pre-line">{row.items || '-'}</td>
+                      <td className="px-3 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRow(row)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Open
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
+                      No drop offs on the current manifest.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
+        </section>
+      </div>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+        <h3 className="text-base font-bold text-slate-950">Manifest History</h3>
+        <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+              <tr>
+                <th className="px-3 py-3">Manifest</th>
+                <th className="px-3 py-3">Stops</th>
+                <th className="px-3 py-3">First Date</th>
+                <th className="px-3 py-3 text-right">Print</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {groupedManifests.length ? (
+                groupedManifests.map(([manifestNumber, manifestRows]) => (
+                  <tr key={manifestNumber} className="hover:bg-slate-50">
+                    <td className="px-3 py-3 font-bold text-slate-950">{manifestNumber}</td>
+                    <td className="px-3 py-3">{manifestRows.length}</td>
+                    <td className="px-3 py-3">{manifestRows[0]?.date || '-'}</td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => printElementById(`print-manifest-${manifestNumber}`)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        Print
+                      </button>
+                      <PrintableManifest manifestNumber={manifestNumber} rows={manifestRows} />
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
+                    No manifest history yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-        <h3 className="text-base font-bold text-slate-900">BOM History</h3>
-
-        {bomDrafts.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500">No BOMs recorded yet.</p>
-        ) : (
-          <div className="mt-3 space-y-3">
-            {bomDrafts.map((bom) => (
-              <div key={bom.bomNumber} className="rounded-lg border border-slate-200 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="font-bold text-slate-900">{bom.bomNumber}</div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Manifest: {bom.manifestNumber || '-'}
-                    </div>
-                    <div className="text-sm text-slate-600">
-                      Reference: {bom.reference || '-'}
-                    </div>
-                    <div className="text-sm text-slate-600">From: {bom.shipFrom || '-'}</div>
-                    <div className="text-sm text-slate-600">Ship To: {bom.shipTo || '-'}</div>
-                    <div className="text-sm text-slate-600">Contact: {bom.contact || '-'}</div>
-                    <div className="text-sm text-slate-600">Created: {bom.createdAt}</div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
-                    className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-                  >
-                    Print BOM
-                  </button>
-                </div>
-
-                <pre className="mt-3 whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm text-slate-800">
-                  {bom.items || 'No items entered.'}
-                </pre>
-
-                <PrintableBom bom={bom} />
-              </div>
-            ))}
-          </div>
-        )}
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+        <h3 className="text-base font-bold text-slate-950">BOM / Release History</h3>
+        <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+              <tr>
+                <th className="px-3 py-3">BOM #</th>
+                <th className="px-3 py-3">Manifest</th>
+                <th className="px-3 py-3">Reference</th>
+                <th className="px-3 py-3">Ship To</th>
+                <th className="px-3 py-3 text-right">Print</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {bomDrafts.length ? (
+                bomDrafts.map((bom) => (
+                  <tr key={bom.bomNumber} className="align-top hover:bg-slate-50">
+                    <td className="px-3 py-3 font-bold text-slate-950">{bom.bomNumber}</td>
+                    <td className="px-3 py-3">{bom.manifestNumber || '-'}</td>
+                    <td className="px-3 py-3">{bom.reference || '-'}</td>
+                    <td className="px-3 py-3 whitespace-pre-line">{bom.shipTo || '-'}</td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        Print
+                      </button>
+                      <PrintableBom bom={bom} />
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
+                    No BOMs created yet. Open a drop off and select Create BOM.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
+
+      <PrintableManifest manifestNumber={currentManifestNumber} rows={allCurrentRows} />
 
       <StopModal
         row={selectedRow}
         locations={locations}
         onClose={() => setSelectedRow(null)}
-        onSave={saveRow}
-        onCreateBom={createBomFromDropOff}
+        onSave={handleSaveRow}
+        onCreateBom={handleCreateBom}
       />
     </div>
   );
 }
-
-export default DeliveryClient;

@@ -24,6 +24,7 @@ const baseNavLinks: NavLink[] = [
   { href: '/kit-tracker', label: 'Kit Tracker', icon: '🧰' },
   { href: '/receiving', label: 'Receiving', icon: '📥' },
   { href: '/transactions', label: 'Transactions', icon: '📊' },
+  { href: '/address-book', label: 'Address Book', icon: '📍' },
   {
     href: '/delivery',
     label: 'Shipping & Delivery',
@@ -63,7 +64,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
       >
         {!collapsed ? (
           <>
-            <Link href="/dashboard" className="block w-full">
+            <Link href="/inventory" className="block w-full">
               <div className="flex flex-col items-center text-center">
                 {!logoFailed ? (
                   <Image
