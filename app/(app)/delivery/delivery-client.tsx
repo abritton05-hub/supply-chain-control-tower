@@ -7,6 +7,8 @@ import type { DeliveryPageData } from './types';
 const DEFAULT_SITE = 'SEA991';
 const MANIFEST_START = 1501;
 const BOM_START = 13501;
+const ACTIVE_MANIFEST_STORAGE_KEY = 'scct-active-manifest-number';
+const DENALI_LOGO_SRC = '/denali-logo.png';
 
 type Direction = 'incoming' | 'outgoing';
 
@@ -85,12 +87,15 @@ function formatType(direction: Direction) {
   return direction === 'incoming' ? 'Pickup' : 'Drop Off';
 }
 
-function createManifestNumber(existingManifestNumbers: string[]) {
-  const used = existingManifestNumbers
-    .map((value) => Number(value.replace('DAI-M', '').replace('DAI-M-', '')))
-    .filter((value) => Number.isFinite(value));
+function parseManifestNumber(value: string) {
+  const numeric = Number(value.replace('DAI-M-', '').replace('DAI-M', ''));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
 
+function createManifestNumber(existingManifestNumbers: string[]) {
+  const used = existingManifestNumbers.map(parseManifestNumber).filter((value) => value > 0);
   const next = used.length ? Math.max(...used) + 1 : MANIFEST_START;
+
   return `DAI-M${next}`;
 }
 
@@ -105,6 +110,7 @@ function createBomNumber(existingBomNumbers: string[]) {
 
 function addressForLocation(locations: ShippingLocation[], code: string) {
   const normalized = normalizeLocation(code);
+
   return (
     locations.find((location) => normalizeLocation(location.code) === normalized)?.address || ''
   );
@@ -297,7 +303,7 @@ function printElementById(id: string) {
   const element = document.getElementById(id);
   if (!element) return;
 
-  const printWindow = window.open('', '_blank', 'width=1000,height=800');
+  const printWindow = window.open('', '_blank', 'width=1100,height=850');
   if (!printWindow) return;
 
   printWindow.document.write(`
@@ -305,19 +311,34 @@ function printElementById(id: string) {
       <head>
         <title>Print</title>
         <style>
+          * { box-sizing: border-box; }
           body { font-family: Arial, sans-serif; color: #0f172a; padding: 24px; }
-          h1, h2, h3 { margin: 0; }
+          h1, h2, h3, p { margin: 0; }
+          .document { max-width: 980px; margin: 0 auto; }
+          .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 3px solid #0f172a; padding-bottom: 14px; margin-bottom: 16px; }
+          .logo { width: 190px; height: auto; object-fit: contain; }
+          .title-block { text-align: right; }
+          .title-block h1 { font-size: 26px; letter-spacing: 0.02em; }
+          .title-block h2 { margin-top: 4px; font-size: 18px; }
+          .title-block p { margin-top: 6px; font-size: 12px; }
+          .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+          .meta-cell { border: 1px solid #cbd5e1; padding: 8px; min-height: 48px; }
+          .label { font-size: 10px; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.05em; }
+          .value { margin-top: 4px; font-size: 12px; font-weight: 700; white-space: pre-wrap; }
           table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-          th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; font-size: 12px; }
-          th { background: #f1f5f9; text-transform: uppercase; font-size: 11px; }
-          .header { border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px; }
-          .meta { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
+          th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; font-size: 11px; }
+          th { background: #f1f5f9; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
+          pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 11px; margin: 0; }
           .box { border: 1px solid #cbd5e1; padding: 10px; margin-top: 12px; }
-          pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 13px; margin: 0; }
-          .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px; }
-          .signature-line { border-bottom: 1px solid #0f172a; height: 28px; }
-          .stop-card { border: 1px solid #cbd5e1; margin-top: 14px; padding: 12px; }
-          .stop-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+          .box-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 6px; }
+          .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
+          .signature-label { font-size: 12px; font-weight: 800; }
+          .signature-line { border-bottom: 1px solid #0f172a; height: 32px; margin-top: 8px; }
+          @media print {
+            body { padding: 18px; }
+            .document { max-width: none; }
+            .logo { width: 175px; }
+          }
         </style>
       </head>
       <body>${element.innerHTML}</body>
@@ -542,7 +563,7 @@ function StopModal({
             <textarea
               value={draft.items || ''}
               onChange={(event) => update('items', event.target.value)}
-              placeholder="5x 150619-071&#10;5x 150619-003"
+              placeholder=""
               className="mt-1 min-h-[150px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
               spellCheck={false}
             />
@@ -581,76 +602,91 @@ function StopModal({
     </div>
   );
 }
-
 function PrintableBom({ bom }: { bom: BomDraft }) {
   return (
     <div id={`print-bom-${bom.bomNumber}`} className="hidden">
-      <div className="header">
-        <h1>DENALI ADVANCED INTEGRATION</h1>
-        <h2>BOM / Release</h2>
-        <p>BOM #: {bom.bomNumber}</p>
-        <p>Manifest #: {bom.manifestNumber}</p>
-      </div>
+      <div className="document">
+        <div className="header">
+          <img src={DENALI_LOGO_SRC} alt="Denali Advanced Integration" className="logo" />
+          <div className="title-block">
+            <h1>BOM / Release</h1>
+            <p>BOM #: {bom.bomNumber}</p>
+            <p>Manifest #: {bom.manifestNumber}</p>
+          </div>
+        </div>
 
-      <div className="meta">
-        <div>
-          <strong>Created:</strong> {bom.createdAt}
+        <div className="meta">
+          <div className="meta-cell">
+            <div className="label">Created</div>
+            <div className="value">{bom.createdAt || '-'}</div>
+          </div>
+          <div className="meta-cell">
+            <div className="label">Reference</div>
+            <div className="value">{bom.reference || '-'}</div>
+          </div>
+          <div className="meta-cell">
+            <div className="label">Contact / POC</div>
+            <div className="value">{bom.contact || '-'}</div>
+          </div>
+          <div className="meta-cell">
+            <div className="label">Status</div>
+            <div className="value">Release</div>
+          </div>
         </div>
-        <div>
-          <strong>Reference:</strong> {bom.reference || '-'}
-        </div>
-        <div>
-          <strong>Ship From:</strong> {bom.shipFrom || '-'}
-        </div>
-        <div>
-          <strong>Ship To:</strong> {bom.shipTo || '-'}
-        </div>
-        <div>
-          <strong>Contact / POC:</strong> {bom.contact || '-'}
-        </div>
-      </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Line</th>
-            <th>Item / PN / Qty</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(bom.items || '')
-            .split('\n')
-            .filter(Boolean)
-            .map((item, index) => (
-              <tr key={`${bom.bomNumber}-${index}`}>
-                <td>{index + 1}</td>
-                <td>{item}</td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
+        <div className="meta">
+          <div className="meta-cell">
+            <div className="label">Ship From</div>
+            <div className="value">{bom.shipFrom || '-'}</div>
+          </div>
+          <div className="meta-cell">
+            <div className="label">Ship To</div>
+            <div className="value">{bom.shipTo || '-'}</div>
+          </div>
+        </div>
 
-      <div className="box">
-        <strong>Notes</strong>
-        <pre>{bom.notes || '-'}</pre>
-      </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Line</th>
+              <th>Item / PN / Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(bom.items || '')
+              .split('\n')
+              .filter(Boolean)
+              .map((item, index) => (
+                <tr key={`${bom.bomNumber}-${index}`}>
+                  <td>{index + 1}</td>
+                  <td>{item}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
 
-      <div className="signature-grid">
-        <div>
-          <strong>Authorized for Release</strong>
-          <div className="signature-line" />
+        <div className="box">
+          <div className="box-title">Notes</div>
+          <pre>{bom.notes || '-'}</pre>
         </div>
-        <div>
-          <strong>Date / Time</strong>
-          <div className="signature-line" />
-        </div>
-        <div>
-          <strong>Released To</strong>
-          <div className="signature-line" />
-        </div>
-        <div>
-          <strong>Signature</strong>
-          <div className="signature-line" />
+
+        <div className="signature-grid">
+          <div>
+            <div className="signature-label">Authorized for Release</div>
+            <div className="signature-line" />
+          </div>
+          <div>
+            <div className="signature-label">Date / Time</div>
+            <div className="signature-line" />
+          </div>
+          <div>
+            <div className="signature-label">Released To</div>
+            <div className="signature-line" />
+          </div>
+          <div>
+            <div className="signature-label">Signature</div>
+            <div className="signature-line" />
+          </div>
         </div>
       </div>
     </div>
@@ -660,77 +696,220 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
 function PrintableManifest({ manifestNumber, rows }: { manifestNumber: string; rows: StopRow[] }) {
   return (
     <div id={`print-manifest-${manifestNumber}`} className="hidden">
-      <div className="header">
-        <h1>DENALI ADVANCED INTEGRATION</h1>
-        <h2>Driver Manifest</h2>
-        <p>Manifest #: {manifestNumber}</p>
-        <p>Date: {today()}</p>
+      <div className="document">
+        <div className="header">
+          <img src={DENALI_LOGO_SRC} alt="Denali Advanced Integration" className="logo" />
+          <div className="title-block">
+            <h1>Driver Manifest</h1>
+            <p>Manifest #: {manifestNumber}</p>
+            <p>Date: {today()}</p>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Stop</th>
+              <th>Type</th>
+              <th>Date</th>
+              <th>From</th>
+              <th>To</th>
+              <th>PO / Ref</th>
+              <th>Items</th>
+              <th>Contact</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`print-row-${row.id}`}>
+                <td>{index + 1}</td>
+                <td>{formatType(row.direction)}</td>
+                <td>{row.date || '-'}</td>
+                <td>
+                  <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
+                </td>
+                <td>
+                  <pre>{displayStopAddress(row.toLocation, row.toAddress)}</pre>
+                </td>
+                <td>
+                  {row.shipmentTransferId || '-'}
+                  {row.reference ? (
+                    <>
+                      <br />
+                      {row.reference}
+                    </>
+                  ) : null}
+                </td>
+                <td>
+                  <pre>{row.items || '-'}</pre>
+                </td>
+                <td>{row.contact || '-'}</td>
+                <td>{row.status || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div className="signature-grid">
+          <div>
+            <div className="signature-label">Driver Name</div>
+            <div className="signature-line" />
+          </div>
+          <div>
+            <div className="signature-label">Date / Time</div>
+            <div className="signature-line" />
+          </div>
+          <div>
+            <div className="signature-label">Released By</div>
+            <div className="signature-line" />
+          </div>
+          <div>
+            <div className="signature-label">Receiver Signature</div>
+            <div className="signature-line" />
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
 
-      {rows.map((row, index) => (
-        <div className="stop-card" key={`print-card-${row.id}`}>
-          <div className="stop-title">
-            Stop {index + 1}: {formatType(row.direction)} — {row.title || '-'}
+function ManifestModal({
+  manifestNumber,
+  rows,
+  onClose,
+  onSave,
+  onPrint,
+  onMakeWorking,
+  onEditStop,
+}: {
+  manifestNumber: string;
+  rows: StopRow[];
+  onClose: () => void;
+  onSave: () => void;
+  onPrint: () => void;
+  onMakeWorking: () => void;
+  onEditStop: (row: StopRow) => void;
+}) {
+  if (!manifestNumber) return null;
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 p-4 print:hidden">
+      <div className="max-h-[92vh] w-full max-w-7xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex items-start gap-4">
+            <img
+              src={DENALI_LOGO_SRC}
+              alt="Denali Advanced Integration"
+              className="h-auto w-44 object-contain"
+            />
+            <div>
+              <h2 className="text-2xl font-bold text-slate-950">Manifest {manifestNumber}</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Review every stop on this manifest. Open any stop to edit it.
+              </p>
+            </div>
           </div>
 
-          <div className="meta">
-            <div>
-              <strong>Date:</strong> {row.date || '-'}
-            </div>
-            <div>
-              <strong>Time / Window:</strong> {row.time || '-'}
-            </div>
-            <div>
-              <strong>PO / Shipment / Transfer ID:</strong> {row.shipmentTransferId || '-'}
-            </div>
-            <div>
-              <strong>Reference / Project:</strong> {row.reference || '-'}
-            </div>
-            <div>
-              <strong>From:</strong>
-              <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
-            </div>
-            <div>
-              <strong>To:</strong>
-              <pre>{displayStopAddress(row.toLocation, row.toAddress)}</pre>
-            </div>
-            <div>
-              <strong>Contact / POC:</strong> {row.contact || '-'}
-            </div>
-            <div>
-              <strong>Status:</strong> {row.status || '-'}
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            aria-label="Close manifest"
+          >
+            ×
+          </button>
+        </div>
 
-          <div className="box">
-            <strong>Items / PN / Qty</strong>
-            <pre>{row.items || '-'}</pre>
-          </div>
+        <div className="mt-5 overflow-auto rounded-xl border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+              <tr>
+                <th className="px-3 py-3">Stop</th>
+                <th className="px-3 py-3">Type</th>
+                <th className="px-3 py-3">Date</th>
+                <th className="px-3 py-3">From</th>
+                <th className="px-3 py-3">To</th>
+                <th className="px-3 py-3">PO / Ref</th>
+                <th className="px-3 py-3">Items</th>
+                <th className="px-3 py-3">Contact</th>
+                <th className="px-3 py-3">Status</th>
+                <th className="px-3 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
 
-          <div className="box">
-            <strong>Notes</strong>
-            <pre>{row.notes || '-'}</pre>
-          </div>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {rows.length ? (
+                rows.map((row, index) => (
+                  <tr key={`manifest-modal-${row.id}`} className="align-top hover:bg-slate-50">
+                    <td className="px-3 py-3 font-bold text-slate-950">Stop {index + 1}</td>
+                    <td className="px-3 py-3 text-slate-700">{formatType(row.direction)}</td>
+                    <td className="px-3 py-3 text-slate-700">{row.date || '-'}</td>
+                    <td className="whitespace-pre-line px-3 py-3 text-slate-700">
+                      {displayStopAddress(row.fromLocation, row.fromAddress)}
+                    </td>
+                    <td className="whitespace-pre-line px-3 py-3 text-slate-700">
+                      {displayStopAddress(row.toLocation, row.toAddress)}
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">
+                      <div>{row.shipmentTransferId || '-'}</div>
+                      <div className="text-xs text-slate-500">{row.reference || ''}</div>
+                    </td>
+                    <td className="whitespace-pre-line px-3 py-3 text-slate-700">
+                      {row.items || '-'}
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">{row.contact || '-'}</td>
+                    <td className="px-3 py-3 text-slate-700">{row.status || '-'}</td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => onEditStop(row)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={10} className="px-3 py-8 text-center text-sm text-slate-500">
+                    No stops found for this manifest.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      ))}
 
-      <div className="signature-grid">
-        <div>
-          <strong>Driver Name</strong>
-          <div className="signature-line" />
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={onMakeWorking}
+            className="rounded-xl border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-bold text-cyan-800 hover:bg-cyan-100"
+          >
+            Make Working Manifest
+          </button>
+
+          <button
+            type="button"
+            onClick={onSave}
+            className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
+          >
+            Save Manifest
+          </button>
+
+          <button
+            type="button"
+            onClick={onPrint}
+            disabled={!rows.length}
+            className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Print Manifest
+          </button>
         </div>
-        <div>
-          <strong>Date / Time</strong>
-          <div className="signature-line" />
-        </div>
-        <div>
-          <strong>Released By</strong>
-          <div className="signature-line" />
-        </div>
-        <div>
-          <strong>Receiver Signature</strong>
-          <div className="signature-line" />
-        </div>
+
+        <PrintableManifest manifestNumber={manifestNumber} rows={rows} />
       </div>
     </div>
   );
@@ -746,7 +925,19 @@ export function DeliveryClient(_props: DeliveryPageData) {
   const [message, setMessage] = useState('');
   const [loadingLabel, setLoadingLabel] = useState('');
 
-  async function refreshData() {
+  function chooseActiveManifestNumber(manifestRows: StopRow[]) {
+    const existingNumbers = manifestRows.map((row) => row.manifestNumber).filter(Boolean);
+    const savedNumber =
+      typeof window !== 'undefined'
+        ? window.localStorage.getItem(ACTIVE_MANIFEST_STORAGE_KEY) || ''
+        : '';
+
+    if (savedNumber) return savedNumber;
+
+    return createManifestNumber(existingNumbers);
+  }
+
+  async function refreshData(options?: { keepManifestNumber?: boolean }) {
     const [manifestRows, bomRows, shippingLocations] = await Promise.all([
       loadManifestRows(),
       loadBomRows(),
@@ -757,11 +948,17 @@ export function DeliveryClient(_props: DeliveryPageData) {
     setBomDrafts(bomRows);
     setLocations(shippingLocations);
 
-    const nextManifestNumber = createManifestNumber(
-      manifestRows.map((row) => row.manifestNumber).filter(Boolean)
-    );
+    setCurrentManifestNumber((current) => {
+      if (options?.keepManifestNumber && current) return current;
 
-    setCurrentManifestNumber(nextManifestNumber);
+      const activeNumber = chooseActiveManifestNumber(manifestRows);
+
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(ACTIVE_MANIFEST_STORAGE_KEY, activeNumber);
+      }
+
+      return activeNumber;
+    });
   }
 
   useEffect(() => {
@@ -797,7 +994,9 @@ export function DeliveryClient(_props: DeliveryPageData) {
       groups.set(manifestNumber, current);
     }
 
-    return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+    return Array.from(groups.entries()).sort(
+      (a, b) => parseManifestNumber(b[0]) - parseManifestNumber(a[0])
+    );
   }, [rows]);
 
   async function addStop(direction: Direction) {
@@ -807,10 +1006,10 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
       setLoadingLabel(`Creating ${formatType(direction)}...`);
       await saveManifestRow(row);
-      await refreshData();
+      await refreshData({ keepManifestNumber: true });
       setSelectedRow(row);
       setSelectedManifestNumber(manifestNumber);
-      setMessage(`${formatType(direction)} recorded under manifest ${manifestNumber}.`);
+      setMessage(`${formatType(direction)} added to manifest ${manifestNumber}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : `${formatType(direction)} save failed.`);
     } finally {
@@ -818,11 +1017,26 @@ export function DeliveryClient(_props: DeliveryPageData) {
     }
   }
 
+  async function startNewManifest() {
+    const nextManifestNumber = createManifestNumber(
+      rows.map((row) => row.manifestNumber).filter(Boolean)
+    );
+
+    setCurrentManifestNumber(nextManifestNumber);
+    setSelectedManifestNumber(nextManifestNumber);
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(ACTIVE_MANIFEST_STORAGE_KEY, nextManifestNumber);
+    }
+
+    setMessage(`Started new working manifest ${nextManifestNumber}.`);
+  }
+
   async function handleSaveRow(row: StopRow) {
     try {
       setLoadingLabel('Saving manifest stop...');
       await updateManifestRow(row);
-      await refreshData();
+      await refreshData({ keepManifestNumber: true });
       setSelectedRow(null);
       setSelectedManifestNumber(row.manifestNumber);
       setMessage(`${formatType(row.direction)} saved.`);
@@ -852,7 +1066,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
       setLoadingLabel('Creating BOM...');
       await saveBomRow(bom);
-      await refreshData();
+      await refreshData({ keepManifestNumber: true });
       setMessage(`BOM ${bomNumber} created.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'BOM creation failed.');
@@ -864,6 +1078,33 @@ export function DeliveryClient(_props: DeliveryPageData) {
   function openManifest(manifestNumber: string) {
     setSelectedManifestNumber(manifestNumber);
     setMessage(`Opened manifest ${manifestNumber}.`);
+  }
+
+  function makeSelectedManifestWorking() {
+    if (!selectedManifestNumber) return;
+
+    setCurrentManifestNumber(selectedManifestNumber);
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(ACTIVE_MANIFEST_STORAGE_KEY, selectedManifestNumber);
+    }
+
+    setMessage(`Set ${selectedManifestNumber} as the working manifest.`);
+  }
+
+  async function saveSelectedManifest() {
+    if (!selectedManifestNumber) return;
+
+    try {
+      setLoadingLabel('Saving manifest...');
+      await Promise.all(selectedManifestRows.map((row) => updateManifestRow(row)));
+      await refreshData({ keepManifestNumber: true });
+      setMessage(`Manifest ${selectedManifestNumber} saved.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Manifest save failed.');
+    } finally {
+      setLoadingLabel('');
+    }
   }
 
   const allCurrentRows = [...pickups, ...dropOffs];
@@ -913,6 +1154,14 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
             <button
               type="button"
+              onClick={startNewManifest}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Start New Manifest
+            </button>
+
+            <button
+              type="button"
               onClick={() => printElementById(`print-manifest-${currentManifestNumber}`)}
               disabled={!allCurrentRows.length}
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -932,10 +1181,13 @@ export function DeliveryClient(_props: DeliveryPageData) {
       <div className="grid gap-4 lg:grid-cols-4 print:hidden">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-            Current Manifest
+            Working Manifest
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-950">
             {currentManifestNumber || 'Loading'}
+          </div>
+          <div className="mt-1 text-xs font-semibold text-slate-500">
+            New stops are added here until you start a new manifest.
           </div>
         </div>
 
@@ -963,7 +1215,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-base font-bold text-slate-950">Pickups</h3>
+          <h3 className="text-base font-bold text-slate-950">Pickups on Working Manifest</h3>
           <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
@@ -1002,7 +1254,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
                 ) : (
                   <tr>
                     <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                      No pickups on the current manifest.
+                      No pickups on the working manifest.
                     </td>
                   </tr>
                 )}
@@ -1012,7 +1264,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-base font-bold text-slate-950">Drop Offs</h3>
+          <h3 className="text-base font-bold text-slate-950">Drop Offs on Working Manifest</h3>
           <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
@@ -1051,7 +1303,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
                 ) : (
                   <tr>
                     <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                      No drop offs on the current manifest.
+                      No drop offs on the working manifest.
                     </td>
                   </tr>
                 )}
@@ -1060,100 +1312,6 @@ export function DeliveryClient(_props: DeliveryPageData) {
           </div>
         </section>
       </div>
-
-      {selectedManifestNumber ? (
-        <section className="rounded-2xl border border-cyan-200 bg-white p-4 shadow-sm print:hidden">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-slate-950">
-                Manifest Detail: {selectedManifestNumber}
-              </h3>
-              <p className="mt-1 text-sm text-slate-500">
-                Review every stop on this manifest. Open any stop to edit it.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => printElementById(`print-manifest-${selectedManifestNumber}`)}
-                disabled={!selectedManifestRows.length}
-                className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Print This Manifest
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedManifestNumber('')}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-              >
-                Close Manifest
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-                <tr>
-                  <th className="px-3 py-3">Stop</th>
-                  <th className="px-3 py-3">Date / Time</th>
-                  <th className="px-3 py-3">From</th>
-                  <th className="px-3 py-3">To</th>
-                  <th className="px-3 py-3">PO / Ref</th>
-                  <th className="px-3 py-3">Items</th>
-                  <th className="px-3 py-3 text-right">Edit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
-                {selectedManifestRows.length ? (
-                  selectedManifestRows.map((row, index) => (
-                    <tr key={`manifest-detail-${row.id}`} className="align-top hover:bg-slate-50">
-                      <td className="px-3 py-3">
-                        <div className="font-bold text-slate-950">Stop {index + 1}</div>
-                        <div className="text-xs text-slate-500">{formatType(row.direction)}</div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div>{row.date || '-'}</div>
-                        <div className="text-xs text-slate-500">{row.time || '-'}</div>
-                      </td>
-                      <td className="px-3 py-3 whitespace-pre-line">
-                        {displayStopAddress(row.fromLocation, row.fromAddress)}
-                      </td>
-                      <td className="px-3 py-3 whitespace-pre-line">
-                        {displayStopAddress(row.toLocation, row.toAddress)}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div>{row.shipmentTransferId || '-'}</div>
-                        <div className="text-xs text-slate-500">{row.reference || ''}</div>
-                      </td>
-                      <td className="px-3 py-3 whitespace-pre-line">{row.items || '-'}</td>
-                      <td className="px-3 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedRow(row)}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                        >
-                          Edit Stop
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">
-                      No stops found for this manifest.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <PrintableManifest manifestNumber={selectedManifestNumber} rows={selectedManifestRows} />
-        </section>
-      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
         <h3 className="text-base font-bold text-slate-950">Manifest History</h3>
@@ -1192,6 +1350,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
                           Print
                         </button>
                       </div>
+
                       <PrintableManifest manifestNumber={manifestNumber} rows={manifestRows} />
                     </td>
                   </tr>
@@ -1237,6 +1396,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
                       >
                         Print
                       </button>
+
                       <PrintableBom bom={bom} />
                     </td>
                   </tr>
@@ -1254,6 +1414,16 @@ export function DeliveryClient(_props: DeliveryPageData) {
       </section>
 
       <PrintableManifest manifestNumber={currentManifestNumber} rows={allCurrentRows} />
+
+      <ManifestModal
+        manifestNumber={selectedManifestNumber}
+        rows={selectedManifestRows}
+        onClose={() => setSelectedManifestNumber('')}
+        onSave={saveSelectedManifest}
+        onPrint={() => printElementById(`print-manifest-${selectedManifestNumber}`)}
+        onMakeWorking={makeSelectedManifestWorking}
+        onEditStop={setSelectedRow}
+      />
 
       <StopModal
         row={selectedRow}
