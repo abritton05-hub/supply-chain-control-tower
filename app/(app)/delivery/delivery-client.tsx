@@ -313,9 +313,11 @@ function printElementById(id: string) {
           .header { border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px; }
           .meta { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
           .box { border: 1px solid #cbd5e1; padding: 10px; margin-top: 12px; }
-          pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 13px; }
+          pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 13px; margin: 0; }
           .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px; }
           .signature-line { border-bottom: 1px solid #0f172a; height: 28px; }
+          .stop-card { border: 1px solid #cbd5e1; margin-top: 14px; padding: 12px; }
+          .stop-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
         </style>
       </head>
       <body>${element.innerHTML}</body>
@@ -527,9 +529,7 @@ function StopModal({
 
           <div className="md:col-span-2">
             <div className="flex items-center justify-between gap-3">
-              <label className="text-sm font-semibold text-slate-700">
-                Items / PN / Qty
-              </label>
+              <label className="text-sm font-semibold text-slate-700">Items / PN / Qty</label>
               <button
                 type="button"
                 onClick={addBlankItemLine}
@@ -667,46 +667,52 @@ function PrintableManifest({ manifestNumber, rows }: { manifestNumber: string; r
         <p>Date: {today()}</p>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Date / Time</th>
-            <th>From</th>
-            <th>To</th>
-            <th>PO / Ref</th>
-            <th>Items</th>
-            <th>Contact</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={`print-${row.id}`}>
-              <td>{formatType(row.direction)}</td>
-              <td>
-                {row.date || '-'}
-                <br />
-                {row.time || '-'}
-              </td>
-              <td>
-                <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
-              </td>
-              <td>
-                <pre>{displayStopAddress(row.toLocation, row.toAddress)}</pre>
-              </td>
-              <td>
-                {row.shipmentTransferId || '-'}
-                <br />
-                {row.reference || ''}
-              </td>
-              <td>
-                <pre>{row.items || '-'}</pre>
-              </td>
-              <td>{row.contact || '-'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {rows.map((row, index) => (
+        <div className="stop-card" key={`print-card-${row.id}`}>
+          <div className="stop-title">
+            Stop {index + 1}: {formatType(row.direction)} — {row.title || '-'}
+          </div>
+
+          <div className="meta">
+            <div>
+              <strong>Date:</strong> {row.date || '-'}
+            </div>
+            <div>
+              <strong>Time / Window:</strong> {row.time || '-'}
+            </div>
+            <div>
+              <strong>PO / Shipment / Transfer ID:</strong> {row.shipmentTransferId || '-'}
+            </div>
+            <div>
+              <strong>Reference / Project:</strong> {row.reference || '-'}
+            </div>
+            <div>
+              <strong>From:</strong>
+              <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
+            </div>
+            <div>
+              <strong>To:</strong>
+              <pre>{displayStopAddress(row.toLocation, row.toAddress)}</pre>
+            </div>
+            <div>
+              <strong>Contact / POC:</strong> {row.contact || '-'}
+            </div>
+            <div>
+              <strong>Status:</strong> {row.status || '-'}
+            </div>
+          </div>
+
+          <div className="box">
+            <strong>Items / PN / Qty</strong>
+            <pre>{row.items || '-'}</pre>
+          </div>
+
+          <div className="box">
+            <strong>Notes</strong>
+            <pre>{row.notes || '-'}</pre>
+          </div>
+        </div>
+      ))}
 
       <div className="signature-grid">
         <div>
@@ -734,6 +740,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
   const [rows, setRows] = useState<StopRow[]>([]);
   const [locations, setLocations] = useState<ShippingLocation[]>([]);
   const [selectedRow, setSelectedRow] = useState<StopRow | null>(null);
+  const [selectedManifestNumber, setSelectedManifestNumber] = useState('');
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
   const [currentManifestNumber, setCurrentManifestNumber] = useState('');
   const [message, setMessage] = useState('');
@@ -776,6 +783,10 @@ export function DeliveryClient(_props: DeliveryPageData) {
   const pickups = currentRows.filter((row) => row.direction === 'incoming');
   const dropOffs = currentRows.filter((row) => row.direction === 'outgoing');
 
+  const selectedManifestRows = selectedManifestNumber
+    ? rows.filter((row) => row.manifestNumber === selectedManifestNumber)
+    : [];
+
   const groupedManifests = useMemo(() => {
     const groups = new Map<string, StopRow[]>();
 
@@ -798,6 +809,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
       await saveManifestRow(row);
       await refreshData();
       setSelectedRow(row);
+      setSelectedManifestNumber(manifestNumber);
       setMessage(`${formatType(direction)} recorded under manifest ${manifestNumber}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : `${formatType(direction)} save failed.`);
@@ -812,6 +824,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
       await updateManifestRow(row);
       await refreshData();
       setSelectedRow(null);
+      setSelectedManifestNumber(row.manifestNumber);
       setMessage(`${formatType(row.direction)} saved.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Save failed.');
@@ -846,6 +859,11 @@ export function DeliveryClient(_props: DeliveryPageData) {
     } finally {
       setLoadingLabel('');
     }
+  }
+
+  function openManifest(manifestNumber: string) {
+    setSelectedManifestNumber(manifestNumber);
+    setMessage(`Opened manifest ${manifestNumber}.`);
   }
 
   const allCurrentRows = [...pickups, ...dropOffs];
@@ -899,7 +917,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
               disabled={!allCurrentRows.length}
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Print Manifest
+              Print Current Manifest
             </button>
           </div>
         </div>
@@ -1043,6 +1061,100 @@ export function DeliveryClient(_props: DeliveryPageData) {
         </section>
       </div>
 
+      {selectedManifestNumber ? (
+        <section className="rounded-2xl border border-cyan-200 bg-white p-4 shadow-sm print:hidden">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-slate-950">
+                Manifest Detail: {selectedManifestNumber}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Review every stop on this manifest. Open any stop to edit it.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => printElementById(`print-manifest-${selectedManifestNumber}`)}
+                disabled={!selectedManifestRows.length}
+                className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Print This Manifest
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedManifestNumber('')}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              >
+                Close Manifest
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-3 py-3">Stop</th>
+                  <th className="px-3 py-3">Date / Time</th>
+                  <th className="px-3 py-3">From</th>
+                  <th className="px-3 py-3">To</th>
+                  <th className="px-3 py-3">PO / Ref</th>
+                  <th className="px-3 py-3">Items</th>
+                  <th className="px-3 py-3 text-right">Edit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {selectedManifestRows.length ? (
+                  selectedManifestRows.map((row, index) => (
+                    <tr key={`manifest-detail-${row.id}`} className="align-top hover:bg-slate-50">
+                      <td className="px-3 py-3">
+                        <div className="font-bold text-slate-950">Stop {index + 1}</div>
+                        <div className="text-xs text-slate-500">{formatType(row.direction)}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div>{row.date || '-'}</div>
+                        <div className="text-xs text-slate-500">{row.time || '-'}</div>
+                      </td>
+                      <td className="px-3 py-3 whitespace-pre-line">
+                        {displayStopAddress(row.fromLocation, row.fromAddress)}
+                      </td>
+                      <td className="px-3 py-3 whitespace-pre-line">
+                        {displayStopAddress(row.toLocation, row.toAddress)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div>{row.shipmentTransferId || '-'}</div>
+                        <div className="text-xs text-slate-500">{row.reference || ''}</div>
+                      </td>
+                      <td className="px-3 py-3 whitespace-pre-line">{row.items || '-'}</td>
+                      <td className="px-3 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRow(row)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Edit Stop
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">
+                      No stops found for this manifest.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <PrintableManifest manifestNumber={selectedManifestNumber} rows={selectedManifestRows} />
+        </section>
+      ) : null}
+
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
         <h3 className="text-base font-bold text-slate-950">Manifest History</h3>
         <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
@@ -1052,7 +1164,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
                 <th className="px-3 py-3">Manifest</th>
                 <th className="px-3 py-3">Stops</th>
                 <th className="px-3 py-3">First Date</th>
-                <th className="px-3 py-3 text-right">Print</th>
+                <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
@@ -1063,13 +1175,23 @@ export function DeliveryClient(_props: DeliveryPageData) {
                     <td className="px-3 py-3">{manifestRows.length}</td>
                     <td className="px-3 py-3">{manifestRows[0]?.date || '-'}</td>
                     <td className="px-3 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => printElementById(`print-manifest-${manifestNumber}`)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                      >
-                        Print
-                      </button>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openManifest(manifestNumber)}
+                          className="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-800"
+                        >
+                          Open
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => printElementById(`print-manifest-${manifestNumber}`)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Print
+                        </button>
+                      </div>
                       <PrintableManifest manifestNumber={manifestNumber} rows={manifestRows} />
                     </td>
                   </tr>
