@@ -27,7 +27,7 @@ const baseNavLinks: NavLink[] = [
   { href: '/address-book', label: 'Address Book', icon: '📍' },
   {
     href: '/delivery',
-    label: 'Shipping & Delivery',
+    label: 'Shipping',
     icon: '🚚',
     matchHrefs: ['/bom', '/driver-manifest', '/shipping'],
   },
