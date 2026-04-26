@@ -1,5 +1,6 @@
-'use client';
+﻿'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { DeliveryPageData } from './types';
@@ -7,7 +8,6 @@ import type { DeliveryPageData } from './types';
 const DEFAULT_SITE = 'SEA991';
 const MANIFEST_START = 1501;
 const BOM_START = 13501;
-const ACTIVE_MANIFEST_STORAGE_KEY = 'scct-active-manifest-number';
 const DENALI_LOGO_SRC = '/denali-logo.png';
 
 type Direction = 'incoming' | 'outgoing';
@@ -62,25 +62,24 @@ function newId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizeLocation(value: string) {
-  const clean = value.trim().toUpperCase();
-
-  if (clean === 'WH') return 'WH/A13';
-  if (clean === 'A13') return 'WH/A13';
-  if (clean === 'WH/A13') return 'WH/A13';
-
-  return clean;
+function clean(value: string | null | undefined) {
+  return value?.trim() || '';
 }
 
-function locationOptionLabel(location: ShippingLocation) {
-  const code = normalizeLocation(location.code || '');
-  const displayName = (location.display_name || '').trim();
+function fixBadEncodingCharacters(text: string) {
+  return text
+    .replace(/\u00e2\u20ac\u201d/g, 'â€”')
+    .replace(/\u00e2\u20ac\u201c/g, 'â€“')
+    .replace(/\u00c3\u2014/g, 'Ã—')
+    .replace(/\u00e2\u20ac\u2122/g, "'")
+    .replace(/\u00e2\u20ac\u0153/g, '"')
+    .replace(/\u00e2\u20ac\u009d/g, '"');
+}
 
-  if (!displayName || normalizeLocation(displayName) === code) {
-    return code;
-  }
-
-  return `${code} — ${displayName}`;
+function normalizeLocation(value: string) {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === 'WH' || normalized === 'A13' || normalized === 'WH/A13') return 'WH/A13';
+  return normalized;
 }
 
 function formatType(direction: Direction) {
@@ -95,50 +94,66 @@ function parseManifestNumber(value: string) {
 function createManifestNumber(existingManifestNumbers: string[]) {
   const used = existingManifestNumbers.map(parseManifestNumber).filter((value) => value > 0);
   const next = used.length ? Math.max(...used) + 1 : MANIFEST_START;
-
   return `DAI-M${next}`;
 }
 
 function createBomNumber(existingBomNumbers: string[]) {
   const used = existingBomNumbers
-    .map((value) => Number(value.replace('DAI-B', '').replace('DAI-B-', '')))
+    .map((value) => Number(value.replace('DAI-B-', '').replace('DAI-B', '')))
     .filter((value) => Number.isFinite(value));
-
   const next = used.length ? Math.max(...used) + 1 : BOM_START;
   return `DAI-B${next}`;
 }
 
 function addressForLocation(locations: ShippingLocation[], code: string) {
   const normalized = normalizeLocation(code);
-
-  return (
-    locations.find((location) => normalizeLocation(location.code) === normalized)?.address || ''
-  );
+  return locations.find((location) => normalizeLocation(location.code) === normalized)?.address || '';
 }
 
 function contactForLocation(locations: ShippingLocation[], code: string) {
   const normalized = normalizeLocation(code);
   const location = locations.find((item) => normalizeLocation(item.code) === normalized);
-
   if (!location) return '';
-
   return [location.contact_name || '', location.contact_phone || ''].filter(Boolean).join(' | ');
 }
 
+function locationOptionLabel(location: ShippingLocation) {
+  const code = normalizeLocation(location.code || '');
+  const displayName = clean(location.display_name);
+  return displayName ? `${code} â€” ${displayName}` : code;
+}
+
 function displayStopAddress(location: string, address: string) {
-  const cleanLocation = location.trim();
-  const cleanAddress = address.trim();
+  const stopLocation = clean(location);
+  const stopAddress = clean(address);
+  if (!stopLocation && !stopAddress) return '-';
+  if (!stopAddress) return stopLocation;
+  if (!stopLocation) return stopAddress;
+  return `${stopLocation}\n${stopAddress}`;
+}
 
-  if (!cleanLocation && !cleanAddress) return '-';
-  if (!cleanAddress) return cleanLocation;
-  if (!cleanLocation) return cleanAddress;
+function manifestNumberForDate(date: string, rows: StopRow[]) {
+  const existing = rows
+    .filter((row) => row.date === date && row.manifestNumber)
+    .sort((a, b) => {
+      const manifestDelta =
+        parseManifestNumber(a.manifestNumber) - parseManifestNumber(b.manifestNumber);
+      if (manifestDelta !== 0) return manifestDelta;
+      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+    })[0]?.manifestNumber;
 
-  return `${cleanLocation}\n${cleanAddress}`;
+  return existing || createManifestNumber(rows.map((row) => row.manifestNumber).filter(Boolean));
+}
+
+function rowsForManifest(rows: StopRow[], manifestNumber: string, manifestDate: string) {
+  if (!manifestNumber || !manifestDate) return [];
+  return rows.filter((row) => row.manifestNumber === manifestNumber && row.date === manifestDate);
 }
 
 function emptyStop(
   direction: Direction,
   manifestNumber: string,
+  stopDate: string,
   locations: ShippingLocation[]
 ): StopRow {
   const isPickup = direction === 'incoming';
@@ -150,7 +165,7 @@ function emptyStop(
     manifestNumber,
     direction,
     title: isPickup ? 'Pickup' : 'Drop Off',
-    date: today(),
+    date: stopDate,
     time: '',
     shipmentTransferId: '',
     reference: '',
@@ -169,16 +184,13 @@ function emptyStop(
 async function loadShippingLocations(): Promise<ShippingLocation[]> {
   const res = await fetch('/api/shipping/locations', { cache: 'no-store' });
   const data = await res.json();
-
   if (!data.ok) throw new Error(data.message || 'Failed to load shipping locations.');
-
   return data.locations || [];
 }
 
 async function loadManifestRows(): Promise<StopRow[]> {
   const res = await fetch('/api/shipping/manifest-history', { cache: 'no-store' });
   const data = await res.json();
-
   if (!data.ok) throw new Error(data.message || 'Failed to load manifest history.');
 
   return (data.rows || []).map((row: any) => ({
@@ -189,14 +201,14 @@ async function loadManifestRows(): Promise<StopRow[]> {
     date: row.stop_date || '',
     time: row.stop_time || '',
     shipmentTransferId: row.shipment_transfer_id || '',
-    reference: row.reference || '',
+    reference: fixBadEncodingCharacters(row.reference || ''),
     fromLocation: row.from_location || '',
-    fromAddress: row.from_address || '',
+    fromAddress: fixBadEncodingCharacters(row.from_address || ''),
     toLocation: row.to_location || '',
-    toAddress: row.to_address || '',
-    contact: row.contact || '',
-    items: row.items || '',
-    notes: row.notes || '',
+    toAddress: fixBadEncodingCharacters(row.to_address || ''),
+    contact: fixBadEncodingCharacters(row.contact || ''),
+    items: fixBadEncodingCharacters(row.items || ''),
+    notes: fixBadEncodingCharacters(row.notes || ''),
     status: row.status || 'Draft',
     createdAt: row.created_at || '',
   }));
@@ -205,7 +217,6 @@ async function loadManifestRows(): Promise<StopRow[]> {
 async function loadBomRows(): Promise<BomDraft[]> {
   const res = await fetch('/api/shipping/bom-history', { cache: 'no-store' });
   const data = await res.json();
-
   if (!data.ok) throw new Error(data.message || 'Failed to load BOM history.');
 
   return (data.rows || []).map((row: any) => ({
@@ -213,18 +224,18 @@ async function loadBomRows(): Promise<BomDraft[]> {
     manifestNumber: row.manifest_number || '',
     sourceStopId: row.source_stop_id || '',
     createdAt: row.created_at || '',
-    reference: row.reference || '',
-    shipFrom: row.ship_from || '',
-    shipTo: row.ship_to || '',
-    contact: row.contact || '',
-    items: row.items || '',
-    notes: row.notes || '',
+    reference: fixBadEncodingCharacters(row.reference || ''),
+    shipFrom: fixBadEncodingCharacters(row.ship_from || ''),
+    shipTo: fixBadEncodingCharacters(row.ship_to || ''),
+    contact: fixBadEncodingCharacters(row.contact || ''),
+    items: fixBadEncodingCharacters(row.items || ''),
+    notes: fixBadEncodingCharacters(row.notes || ''),
   }));
 }
 
-async function saveManifestRow(row: StopRow) {
+async function saveManifestRow(row: StopRow, method: 'POST' | 'PATCH') {
   const res = await fetch('/api/shipping/manifest-history', {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       id: row.id,
@@ -239,7 +250,7 @@ async function saveManifestRow(row: StopRow) {
       from_address: row.fromAddress,
       to_location: row.toLocation,
       to_address: row.toAddress,
-      contact: row.contact,
+      contact: row.direction === 'incoming' ? '' : row.contact,
       items: row.items,
       notes: row.notes,
       status: row.status,
@@ -248,34 +259,6 @@ async function saveManifestRow(row: StopRow) {
 
   const data = await res.json();
   if (!data.ok) throw new Error(data.message || 'Failed to save manifest stop.');
-}
-
-async function updateManifestRow(row: StopRow) {
-  const res = await fetch('/api/shipping/manifest-history', {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id: row.id,
-      manifest_number: row.manifestNumber,
-      direction: row.direction,
-      title: row.title,
-      stop_date: row.date || null,
-      stop_time: row.time,
-      shipment_transfer_id: row.shipmentTransferId,
-      reference: row.reference,
-      from_location: row.fromLocation,
-      from_address: row.fromAddress,
-      to_location: row.toLocation,
-      to_address: row.toAddress,
-      contact: row.contact,
-      items: row.items,
-      notes: row.notes,
-      status: row.status,
-    }),
-  });
-
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.message || 'Failed to update manifest stop.');
 }
 
 async function saveBomRow(bom: BomDraft) {
@@ -319,13 +302,14 @@ function printElementById(id: string) {
           .logo { width: 190px; height: auto; object-fit: contain; }
           .title-block { text-align: right; }
           .title-block h1 { font-size: 26px; letter-spacing: 0.02em; }
-          .title-block h2 { margin-top: 4px; font-size: 18px; }
           .title-block p { margin-top: 6px; font-size: 12px; }
           .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
           .meta-cell { border: 1px solid #cbd5e1; padding: 8px; min-height: 48px; }
           .label { font-size: 10px; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.05em; }
           .value { margin-top: 4px; font-size: 12px; font-weight: 700; white-space: pre-wrap; }
           table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+          table th:nth-child(6), table td:nth-child(6) { width: 26%; }
+          table th:nth-child(3), table td:nth-child(3), table th:nth-child(4), table td:nth-child(4) { width: 18%; }
           th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; font-size: 11px; }
           th { background: #f1f5f9; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
           pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 11px; margin: 0; }
@@ -334,11 +318,7 @@ function printElementById(id: string) {
           .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
           .signature-label { font-size: 12px; font-weight: 800; }
           .signature-line { border-bottom: 1px solid #0f172a; height: 32px; margin-top: 8px; }
-          @media print {
-            body { padding: 18px; }
-            .document { max-width: none; }
-            .logo { width: 175px; }
-          }
+          @media print { body { padding: 18px; } .document { max-width: none; } .logo { width: 175px; } }
         </style>
       </head>
       <body>${element.innerHTML}</body>
@@ -371,8 +351,6 @@ function StopModal({
 
   if (!draft) return null;
 
-  const isDropOff = draft.direction === 'outgoing';
-
   function update(field: keyof StopRow, value: string) {
     setDraft((current) => (current ? { ...current, [field]: value } : current));
   }
@@ -390,7 +368,7 @@ function StopModal({
           ...current,
           fromLocation: normalized,
           fromAddress: address,
-          contact: current.direction === 'incoming' ? contact || current.contact : current.contact,
+          contact: current.direction === 'incoming' ? '' : current.contact,
         };
       }
 
@@ -398,13 +376,9 @@ function StopModal({
         ...current,
         toLocation: normalized,
         toAddress: address,
-        contact: current.direction === 'outgoing' ? contact || current.contact : current.contact,
+        contact: current.direction === 'incoming' ? '' : contact || current.contact,
       };
     });
-  }
-
-  function addBlankItemLine() {
-    update('items', draft.items.trim() ? `${draft.items.trim()}\n1x ` : '1x ');
   }
 
   return (
@@ -440,143 +414,74 @@ function StopModal({
             />
           </label>
 
-          <label className="text-sm font-semibold text-slate-700">
-            Title
-            <input
-              value={draft.title}
-              onChange={(event) => update('title', event.target.value)}
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
-            />
-          </label>
+          <TextInput label="Title" value={draft.title} onChange={(value) => update('title', value)} />
+          <DateInput label="Date" value={draft.date} onChange={(value) => update('date', value)} />
+          <TextInput label="Time / Window" value={draft.time} onChange={(value) => update('time', value)} />
+          <TextInput
+            label="PO / Shipment / Transfer ID"
+            value={draft.shipmentTransferId}
+            onChange={(value) => update('shipmentTransferId', value)}
+          />
+          <TextInput
+            label="Reference / Project"
+            value={draft.reference}
+            onChange={(value) => update('reference', value)}
+          />
 
-          <label className="text-sm font-semibold text-slate-700">
-            Date
-            <input
-              type="date"
-              value={draft.date}
-              onChange={(event) => update('date', event.target.value)}
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
-            />
-          </label>
+          <LocationSelect
+            label="From"
+            value={draft.fromLocation}
+            locations={locations}
+            onChange={(value) => updateLocation('fromLocation', value)}
+          />
+          <LocationSelect
+            label="To"
+            value={draft.toLocation}
+            locations={locations}
+            onChange={(value) => updateLocation('toLocation', value)}
+          />
 
-          <label className="text-sm font-semibold text-slate-700">
-            Time / Window
-            <input
-              type="text"
-              value={draft.time}
-              onChange={(event) => update('time', event.target.value)}
-              placeholder="10:30 AM-12:00 PM"
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
-            />
-          </label>
+          <TextArea
+            label="From Address"
+            value={draft.fromAddress}
+            onChange={(value) => update('fromAddress', value)}
+          />
+          <TextArea
+            label="To Address"
+            value={draft.toAddress}
+            onChange={(value) => update('toAddress', value)}
+          />
 
-          <label className="text-sm font-semibold text-slate-700">
-            PO / Shipment / Transfer ID
-            <input
-              value={draft.shipmentTransferId}
-              onChange={(event) => update('shipmentTransferId', event.target.value)}
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
-            />
-          </label>
-
-          <label className="text-sm font-semibold text-slate-700">
-            Reference / Project
-            <input
-              value={draft.reference}
-              onChange={(event) => update('reference', event.target.value)}
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
-            />
-          </label>
-
-          <label className="text-sm font-semibold text-slate-700">
-            From
-            <select
-              value={draft.fromLocation}
-              onChange={(event) => updateLocation('fromLocation', event.target.value)}
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
-            >
-              <option value="">Manual / Select location</option>
-              {locations.map((location) => (
-                <option key={location.code} value={location.code}>
-                  {locationOptionLabel(location)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="text-sm font-semibold text-slate-700">
-            To
-            <select
-              value={draft.toLocation}
-              onChange={(event) => updateLocation('toLocation', event.target.value)}
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
-            >
-              <option value="">Manual / Select location</option>
-              {locations.map((location) => (
-                <option key={location.code} value={location.code}>
-                  {locationOptionLabel(location)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="text-sm font-semibold text-slate-700">
-            From Address
-            <textarea
-              value={draft.fromAddress}
-              onChange={(event) => update('fromAddress', event.target.value)}
-              className="mt-1 min-h-[96px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            />
-          </label>
-
-          <label className="text-sm font-semibold text-slate-700">
-            To Address
-            <textarea
-              value={draft.toAddress}
-              onChange={(event) => update('toAddress', event.target.value)}
-              className="mt-1 min-h-[96px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            />
-          </label>
-
-          <label className="text-sm font-semibold text-slate-700 md:col-span-2">
-            Contact / POC
-            <input
+          <div className="md:col-span-2">
+            <TextInput
+              label="Contact / POC"
               value={draft.contact}
-              onChange={(event) => update('contact', event.target.value)}
-              placeholder="Only use when there is a real name or phone number"
-              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+              onChange={(value) => update('contact', value)}
             />
-          </label>
+          </div>
 
           <div className="md:col-span-2">
             <div className="flex items-center justify-between gap-3">
               <label className="text-sm font-semibold text-slate-700">Items / PN / Qty</label>
               <button
                 type="button"
-                onClick={addBlankItemLine}
+                onClick={() => update('items', draft.items.trim() ? `${draft.items.trim()}\n1x ` : '1x ')}
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
               >
                 Add Item Line
               </button>
             </div>
-
             <textarea
-              value={draft.items || ''}
+              value={draft.items}
               onChange={(event) => update('items', event.target.value)}
-              placeholder=""
               className="mt-1 min-h-[150px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
               spellCheck={false}
             />
           </div>
 
-          <label className="text-sm font-semibold text-slate-700 md:col-span-2">
-            Notes
-            <textarea
-              value={draft.notes || ''}
-              onChange={(event) => update('notes', event.target.value)}
-              className="mt-1 min-h-[100px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            />
-          </label>
+          <div className="md:col-span-2">
+            <TextArea label="Notes" value={draft.notes} onChange={(value) => update('notes', value)} />
+          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap justify-end gap-2">
@@ -588,7 +493,7 @@ function StopModal({
             Save Changes
           </button>
 
-          {isDropOff ? (
+          {draft.direction === 'outgoing' ? (
             <button
               type="button"
               onClick={() => onCreateBom(draft)}
@@ -602,11 +507,107 @@ function StopModal({
     </div>
   );
 }
+
+function TextInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="text-sm font-semibold text-slate-700">
+      {label}
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+      />
+    </label>
+  );
+}
+
+function DateInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="text-sm font-semibold text-slate-700">
+      {label}
+      <input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+      />
+    </label>
+  );
+}
+
+function TextArea({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="text-sm font-semibold text-slate-700">
+      {label}
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 min-h-[96px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+      />
+    </label>
+  );
+}
+
+function LocationSelect({
+  label,
+  value,
+  locations,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  locations: ShippingLocation[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="text-sm font-semibold text-slate-700">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+      >
+        <option value="">Manual / Select location</option>
+        {locations.map((location) => (
+          <option key={location.code} value={location.code}>
+            {locationOptionLabel(location)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function PrintableBom({ bom }: { bom: BomDraft }) {
   return (
     <div id={`print-bom-${bom.bomNumber}`} className="hidden">
       <div className="document">
         <div className="header">
+          {/* eslint-disable-next-line @next/next/no-img-element -- Plain img preserves print-only document output. */}
           <img src={DENALI_LOGO_SRC} alt="Denali Advanced Integration" className="logo" />
           <div className="title-block">
             <h1>BOM / Release</h1>
@@ -616,33 +617,15 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
         </div>
 
         <div className="meta">
-          <div className="meta-cell">
-            <div className="label">Created</div>
-            <div className="value">{bom.createdAt || '-'}</div>
-          </div>
-          <div className="meta-cell">
-            <div className="label">Reference</div>
-            <div className="value">{bom.reference || '-'}</div>
-          </div>
-          <div className="meta-cell">
-            <div className="label">Contact / POC</div>
-            <div className="value">{bom.contact || '-'}</div>
-          </div>
-          <div className="meta-cell">
-            <div className="label">Status</div>
-            <div className="value">Release</div>
-          </div>
+          <MetaCell label="Created" value={bom.createdAt || '-'} />
+          <MetaCell label="Reference" value={bom.reference || '-'} />
+          <MetaCell label="Contact / POC" value={bom.contact || '-'} />
+          <MetaCell label="Status" value="Release" />
         </div>
 
         <div className="meta">
-          <div className="meta-cell">
-            <div className="label">Ship From</div>
-            <div className="value">{bom.shipFrom || '-'}</div>
-          </div>
-          <div className="meta-cell">
-            <div className="label">Ship To</div>
-            <div className="value">{bom.shipTo || '-'}</div>
-          </div>
+          <MetaCell label="Ship From" value={bom.shipFrom || '-'} />
+          <MetaCell label="Ship To" value={bom.shipTo || '-'} />
         </div>
 
         <table>
@@ -657,9 +640,7 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
               .split('\n')
               .filter(Boolean)
               .map((item, index) => (
-                <tr key={`${bom.bomNumber}-${index}`}>
-                  <td>{index + 1}</td>
-                  <td>{item}</td>
+                <tr key={`${bom.bomNumber}-${index}`}>                  <td>{item}</td>
                 </tr>
               ))}
           </tbody>
@@ -670,61 +651,49 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
           <pre>{bom.notes || '-'}</pre>
         </div>
 
-        <div className="signature-grid">
-          <div>
-            <div className="signature-label">Authorized for Release</div>
-            <div className="signature-line" />
-          </div>
-          <div>
-            <div className="signature-label">Date / Time</div>
-            <div className="signature-line" />
-          </div>
-          <div>
-            <div className="signature-label">Released To</div>
-            <div className="signature-line" />
-          </div>
-          <div>
-            <div className="signature-label">Signature</div>
-            <div className="signature-line" />
-          </div>
-        </div>
+        <SignatureGrid />
       </div>
     </div>
   );
 }
 
-function PrintableManifest({ manifestNumber, rows }: { manifestNumber: string; rows: StopRow[] }) {
+function PrintableManifest({
+  manifestNumber,
+  manifestDate,
+  printId,
+  rows,
+}: {
+  manifestNumber: string;
+  manifestDate: string;
+  printId: string;
+  rows: StopRow[];
+}) {
   return (
-    <div id={`print-manifest-${manifestNumber}`} className="hidden">
+    <div id={printId} className="hidden">
       <div className="document">
         <div className="header">
+          {/* eslint-disable-next-line @next/next/no-img-element -- Plain img preserves print-only document output. */}
           <img src={DENALI_LOGO_SRC} alt="Denali Advanced Integration" className="logo" />
           <div className="title-block">
-            <h1>Driver Manifest</h1>
+            <h1>Route List</h1>
             <p>Manifest #: {manifestNumber}</p>
-            <p>Date: {today()}</p>
+            <p>Date: {manifestDate || '-'}</p>
           </div>
         </div>
 
         <table>
           <thead>
-            <tr>
-              <th>Stop</th>
-              <th>Type</th>
+            <tr>              <th>Type</th>
               <th>Date</th>
               <th>From</th>
               <th>To</th>
               <th>PO / Ref</th>
               <th>Items</th>
-              <th>Contact</th>
-              <th>Status</th>
-            </tr>
+              <th>Contact</th>            </tr>
           </thead>
           <tbody>
             {rows.map((row, index) => (
-              <tr key={`print-row-${row.id}`}>
-                <td>{index + 1}</td>
-                <td>{formatType(row.direction)}</td>
+              <tr key={`print-row-${row.id}`}>                <td>{formatType(row.direction)}</td>
                 <td>{row.date || '-'}</td>
                 <td>
                   <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
@@ -744,31 +713,44 @@ function PrintableManifest({ manifestNumber, rows }: { manifestNumber: string; r
                 <td>
                   <pre>{row.items || '-'}</pre>
                 </td>
-                <td>{row.contact || '-'}</td>
-                <td>{row.status || '-'}</td>
-              </tr>
+                <td>{row.direction === 'incoming' ? '-' : row.contact || '-'}</td>              </tr>
             ))}
           </tbody>
         </table>
 
-        <div className="signature-grid">
-          <div>
-            <div className="signature-label">Driver Name</div>
-            <div className="signature-line" />
-          </div>
-          <div>
-            <div className="signature-label">Date / Time</div>
-            <div className="signature-line" />
-          </div>
-          <div>
-            <div className="signature-label">Released By</div>
-            <div className="signature-line" />
-          </div>
-          <div>
-            <div className="signature-label">Receiver Signature</div>
-            <div className="signature-line" />
-          </div>
-        </div>
+        <SignatureGrid />
+      </div>
+    </div>
+  );
+}
+
+function MetaCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="meta-cell">
+      <div className="label">{label}</div>
+      <div className="value">{value}</div>
+    </div>
+  );
+}
+
+function SignatureGrid() {
+  return (
+    <div className="signature-grid">
+      <div>
+        <div className="signature-label">Driver / Authorized By</div>
+        <div className="signature-line" />
+      </div>
+      <div>
+        <div className="signature-label">Date / Time</div>
+        <div className="signature-line" />
+      </div>
+      <div>
+        <div className="signature-label">Released To</div>
+        <div className="signature-line" />
+      </div>
+      <div>
+        <div className="signature-label">Signature</div>
+        <div className="signature-line" />
       </div>
     </div>
   );
@@ -776,37 +758,40 @@ function PrintableManifest({ manifestNumber, rows }: { manifestNumber: string; r
 
 function ManifestModal({
   manifestNumber,
+  manifestDate,
   rows,
   onClose,
   onSave,
   onPrint,
-  onMakeWorking,
   onEditStop,
 }: {
   manifestNumber: string;
+  manifestDate: string;
   rows: StopRow[];
   onClose: () => void;
   onSave: () => void;
   onPrint: () => void;
-  onMakeWorking: () => void;
   onEditStop: (row: StopRow) => void;
 }) {
-  if (!manifestNumber) return null;
+  if (!manifestNumber || !manifestDate) return null;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 p-4 print:hidden">
       <div className="max-h-[92vh] w-full max-w-7xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
         <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-4">
-            <img
+            <Image
               src={DENALI_LOGO_SRC}
               alt="Denali Advanced Integration"
+              width={176}
+              height={64}
               className="h-auto w-44 object-contain"
+              priority
             />
             <div>
               <h2 className="text-2xl font-bold text-slate-950">Manifest {manifestNumber}</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Review every stop on this manifest. Open any stop to edit it.
+                Review every stop for {manifestDate}. Open any stop to edit it.
               </p>
             </div>
           </div>
@@ -817,80 +802,13 @@ function ManifestModal({
             className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
             aria-label="Close manifest"
           >
-            ×
+            Ã—
           </button>
         </div>
 
-        <div className="mt-5 overflow-auto rounded-xl border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-              <tr>
-                <th className="px-3 py-3">Stop</th>
-                <th className="px-3 py-3">Type</th>
-                <th className="px-3 py-3">Date</th>
-                <th className="px-3 py-3">From</th>
-                <th className="px-3 py-3">To</th>
-                <th className="px-3 py-3">PO / Ref</th>
-                <th className="px-3 py-3">Items</th>
-                <th className="px-3 py-3">Contact</th>
-                <th className="px-3 py-3">Status</th>
-                <th className="px-3 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-slate-200 bg-white">
-              {rows.length ? (
-                rows.map((row, index) => (
-                  <tr key={`manifest-modal-${row.id}`} className="align-top hover:bg-slate-50">
-                    <td className="px-3 py-3 font-bold text-slate-950">Stop {index + 1}</td>
-                    <td className="px-3 py-3 text-slate-700">{formatType(row.direction)}</td>
-                    <td className="px-3 py-3 text-slate-700">{row.date || '-'}</td>
-                    <td className="whitespace-pre-line px-3 py-3 text-slate-700">
-                      {displayStopAddress(row.fromLocation, row.fromAddress)}
-                    </td>
-                    <td className="whitespace-pre-line px-3 py-3 text-slate-700">
-                      {displayStopAddress(row.toLocation, row.toAddress)}
-                    </td>
-                    <td className="px-3 py-3 text-slate-700">
-                      <div>{row.shipmentTransferId || '-'}</div>
-                      <div className="text-xs text-slate-500">{row.reference || ''}</div>
-                    </td>
-                    <td className="whitespace-pre-line px-3 py-3 text-slate-700">
-                      {row.items || '-'}
-                    </td>
-                    <td className="px-3 py-3 text-slate-700">{row.contact || '-'}</td>
-                    <td className="px-3 py-3 text-slate-700">{row.status || '-'}</td>
-                    <td className="px-3 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onEditStop(row)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                      >
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={10} className="px-3 py-8 text-center text-sm text-slate-500">
-                    No stops found for this manifest.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <StopsTable rows={rows} mode="manifest" onOpen={onEditStop} />
 
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <button
-            type="button"
-            onClick={onMakeWorking}
-            className="rounded-xl border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-bold text-cyan-800 hover:bg-cyan-100"
-          >
-            Make Working Manifest
-          </button>
-
           <button
             type="button"
             onClick={onSave}
@@ -898,7 +816,6 @@ function ManifestModal({
           >
             Save Manifest
           </button>
-
           <button
             type="button"
             onClick={onPrint}
@@ -909,8 +826,103 @@ function ManifestModal({
           </button>
         </div>
 
-        <PrintableManifest manifestNumber={manifestNumber} rows={rows} />
+        <PrintableManifest
+          manifestNumber={manifestNumber}
+          manifestDate={manifestDate}
+          printId={`print-manifest-modal-${manifestDate}-${manifestNumber}`}
+          rows={rows}
+        />
       </div>
+    </div>
+  );
+}
+
+function StopsTable({
+  rows,
+  mode,
+  emptyText,
+  onOpen,
+}: {
+  rows: StopRow[];
+  mode: 'pickup' | 'dropoff' | 'manifest';
+  emptyText?: string;
+  onOpen: (row: StopRow) => void;
+}) {
+  const isManifest = mode === 'manifest';
+  const primaryAddressLabel = isManifest || mode === 'pickup' ? 'From' : 'To';
+  const secondaryAddressLabel = isManifest ? 'To' : '';
+
+  return (
+    <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
+      <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+          <tr>
+            {isManifest ? <th className="px-3 py-3">Stop</th> : null}
+            {isManifest ? <th className="px-3 py-3">Type</th> : null}
+            <th className="px-3 py-3">Date</th>
+            <th className="px-3 py-3">{primaryAddressLabel}</th>
+            {isManifest ? <th className="px-3 py-3">{secondaryAddressLabel}</th> : null}
+            <th className="px-3 py-3">PO / Ref</th>
+            <th className="px-3 py-3">Items</th>
+            {isManifest ? <th className="px-3 py-3">Contact</th> : null}
+            {isManifest ? <th className="px-3 py-3">Status</th> : null}
+            <th className="px-3 py-3 text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-200 bg-white">
+          {rows.length ? (
+            rows.map((row, index) => {
+              const primaryAddress =
+                isManifest || mode === 'pickup'
+                  ? displayStopAddress(row.fromLocation, row.fromAddress)
+                  : displayStopAddress(row.toLocation, row.toAddress);
+              const secondaryAddress =
+                isManifest || mode === 'pickup'
+                  ? displayStopAddress(row.toLocation, row.toAddress)
+                  : displayStopAddress(row.fromLocation, row.fromAddress);
+
+              return (
+                <tr key={`${mode}-${row.id}`} className="align-top hover:bg-slate-50">
+                  {isManifest ? (
+                    <td className="px-3 py-3 font-bold text-slate-950">Stop {index + 1}</td>
+                  ) : null}
+                  {isManifest ? <td className="px-3 py-3">{formatType(row.direction)}</td> : null}
+                  <td className="px-3 py-3">{row.date || '-'}</td>
+                  <td className="whitespace-pre-line px-3 py-3">{primaryAddress}</td>
+                  {isManifest ? (
+                    <td className="whitespace-pre-line px-3 py-3">{secondaryAddress}</td>
+                  ) : null}
+                  <td className="px-3 py-3">
+                    <div>{row.shipmentTransferId || '-'}</div>
+                    <div className="text-xs text-slate-500">{row.reference || ''}</div>
+                  </td>
+                  <td className="whitespace-pre-line px-3 py-3">{row.items || '-'}</td>
+                  {isManifest ? <td className="px-3 py-3">{row.contact || '-'}</td> : null}
+                  {isManifest ? <td className="px-3 py-3">{row.status || '-'}</td> : null}
+                  <td className="px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onOpen(row)}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              );
+            })
+          ) : (
+            <tr>
+              <td
+                colSpan={isManifest ? 10 : 5}
+                className="px-3 py-8 text-center text-sm text-slate-500"
+              >
+                {emptyText || 'No stops found.'}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -920,24 +932,12 @@ export function DeliveryClient(_props: DeliveryPageData) {
   const [locations, setLocations] = useState<ShippingLocation[]>([]);
   const [selectedRow, setSelectedRow] = useState<StopRow | null>(null);
   const [selectedManifestNumber, setSelectedManifestNumber] = useState('');
+  const [selectedManifestDate, setSelectedManifestDate] = useState(today());
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
-  const [currentManifestNumber, setCurrentManifestNumber] = useState('');
   const [message, setMessage] = useState('');
   const [loadingLabel, setLoadingLabel] = useState('');
 
-  function chooseActiveManifestNumber(manifestRows: StopRow[]) {
-    const existingNumbers = manifestRows.map((row) => row.manifestNumber).filter(Boolean);
-    const savedNumber =
-      typeof window !== 'undefined'
-        ? window.localStorage.getItem(ACTIVE_MANIFEST_STORAGE_KEY) || ''
-        : '';
-
-    if (savedNumber) return savedNumber;
-
-    return createManifestNumber(existingNumbers);
-  }
-
-  async function refreshData(options?: { keepManifestNumber?: boolean }) {
+  async function refreshData() {
     const [manifestRows, bomRows, shippingLocations] = await Promise.all([
       loadManifestRows(),
       loadBomRows(),
@@ -947,18 +947,6 @@ export function DeliveryClient(_props: DeliveryPageData) {
     setRows(manifestRows);
     setBomDrafts(bomRows);
     setLocations(shippingLocations);
-
-    setCurrentManifestNumber((current) => {
-      if (options?.keepManifestNumber && current) return current;
-
-      const activeNumber = chooseActiveManifestNumber(manifestRows);
-
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(ACTIVE_MANIFEST_STORAGE_KEY, activeNumber);
-      }
-
-      return activeNumber;
-    });
   }
 
   useEffect(() => {
@@ -976,39 +964,51 @@ export function DeliveryClient(_props: DeliveryPageData) {
     init();
   }, []);
 
-  const currentRows = rows.filter((row) => row.manifestNumber === currentManifestNumber);
-  const pickups = currentRows.filter((row) => row.direction === 'incoming');
-  const dropOffs = currentRows.filter((row) => row.direction === 'outgoing');
+  const selectedDateManifestNumber = manifestNumberForDate(selectedManifestDate, rows);
+  const pickups = rows.filter(
+    (row) => row.date === selectedManifestDate && row.direction === 'incoming'
+  );
+  const dropOffs = rows.filter(
+    (row) => row.date === selectedManifestDate && row.direction === 'outgoing'
+  );
+  const selectedDateManifestRows = rowsForManifest(
+    rows,
+    selectedDateManifestNumber,
+    selectedManifestDate
+  );
+  const selectedManifestRows = rowsForManifest(rows, selectedManifestNumber, selectedManifestDate);
 
-  const selectedManifestRows = selectedManifestNumber
-    ? rows.filter((row) => row.manifestNumber === selectedManifestNumber)
-    : [];
-
-  const groupedManifests = useMemo(() => {
-    const groups = new Map<string, StopRow[]>();
+  const groupedByDate = useMemo(() => {
+    const dateGroups = new Map<string, Map<string, StopRow[]>>();
 
     for (const row of rows) {
+      const date = row.date || 'Unassigned';
       const manifestNumber = row.manifestNumber || 'Unassigned';
-      const current = groups.get(manifestNumber) || [];
-      current.push(row);
-      groups.set(manifestNumber, current);
+      const manifests = dateGroups.get(date) || new Map<string, StopRow[]>();
+      manifests.set(manifestNumber, [...(manifests.get(manifestNumber) || []), row]);
+      dateGroups.set(date, manifests);
     }
 
-    return Array.from(groups.entries()).sort(
-      (a, b) => parseManifestNumber(b[0]) - parseManifestNumber(a[0])
+    return Array.from(dateGroups.entries()).sort(
+      (a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime()
     );
   }, [rows]);
 
+  function changeManifestDate(value: string) {
+    setSelectedManifestDate(value);
+    setSelectedManifestNumber('');
+    setSelectedRow(null);
+  }
+
   async function addStop(direction: Direction) {
     try {
-      const manifestNumber = currentManifestNumber || createManifestNumber([]);
-      const row = emptyStop(direction, manifestNumber, locations);
+      const manifestNumber = manifestNumberForDate(selectedManifestDate, rows);
+      const row = emptyStop(direction, manifestNumber, selectedManifestDate, locations);
 
       setLoadingLabel(`Creating ${formatType(direction)}...`);
-      await saveManifestRow(row);
-      await refreshData({ keepManifestNumber: true });
+      await saveManifestRow(row, 'POST');
+      await refreshData();
       setSelectedRow(row);
-      setSelectedManifestNumber(manifestNumber);
       setMessage(`${formatType(direction)} added to manifest ${manifestNumber}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : `${formatType(direction)} save failed.`);
@@ -1017,28 +1017,21 @@ export function DeliveryClient(_props: DeliveryPageData) {
     }
   }
 
-  async function startNewManifest() {
-    const nextManifestNumber = createManifestNumber(
-      rows.map((row) => row.manifestNumber).filter(Boolean)
-    );
-
-    setCurrentManifestNumber(nextManifestNumber);
-    setSelectedManifestNumber(nextManifestNumber);
-
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(ACTIVE_MANIFEST_STORAGE_KEY, nextManifestNumber);
-    }
-
-    setMessage(`Started new working manifest ${nextManifestNumber}.`);
-  }
-
   async function handleSaveRow(row: StopRow) {
     try {
+      const rowDate = row.date || selectedManifestDate || today();
+      const manifestNumber = manifestNumberForDate(
+        rowDate,
+        rows.filter((existing) => existing.id !== row.id)
+      );
+      const rowToSave = { ...row, date: rowDate, manifestNumber };
+
       setLoadingLabel('Saving manifest stop...');
-      await updateManifestRow(row);
-      await refreshData({ keepManifestNumber: true });
+      await saveManifestRow(rowToSave, 'PATCH');
+      await refreshData();
       setSelectedRow(null);
-      setSelectedManifestNumber(row.manifestNumber);
+      setSelectedManifestDate(rowDate);
+      setSelectedManifestNumber(manifestNumber);
       setMessage(`${formatType(row.direction)} saved.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Save failed.');
@@ -1050,7 +1043,6 @@ export function DeliveryClient(_props: DeliveryPageData) {
   async function handleCreateBom(row: StopRow) {
     try {
       const bomNumber = createBomNumber(bomDrafts.map((bom) => bom.bomNumber).filter(Boolean));
-
       const bom: BomDraft = {
         bomNumber,
         manifestNumber: row.manifestNumber,
@@ -1059,14 +1051,14 @@ export function DeliveryClient(_props: DeliveryPageData) {
         reference: row.reference || row.shipmentTransferId,
         shipFrom: displayStopAddress(row.fromLocation, row.fromAddress),
         shipTo: displayStopAddress(row.toLocation, row.toAddress),
-        contact: row.contact,
+        contact: row.direction === 'incoming' ? '' : row.contact,
         items: row.items,
         notes: row.notes,
       };
 
       setLoadingLabel('Creating BOM...');
       await saveBomRow(bom);
-      await refreshData({ keepManifestNumber: true });
+      await refreshData();
       setMessage(`BOM ${bomNumber} created.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'BOM creation failed.');
@@ -1075,21 +1067,11 @@ export function DeliveryClient(_props: DeliveryPageData) {
     }
   }
 
-  function openManifest(manifestNumber: string) {
+  function openManifest(manifestNumber: string, manifestDate: string) {
+    setSelectedManifestDate(manifestDate);
     setSelectedManifestNumber(manifestNumber);
+    setSelectedRow(null);
     setMessage(`Opened manifest ${manifestNumber}.`);
-  }
-
-  function makeSelectedManifestWorking() {
-    if (!selectedManifestNumber) return;
-
-    setCurrentManifestNumber(selectedManifestNumber);
-
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(ACTIVE_MANIFEST_STORAGE_KEY, selectedManifestNumber);
-    }
-
-    setMessage(`Set ${selectedManifestNumber} as the working manifest.`);
   }
 
   async function saveSelectedManifest() {
@@ -1097,8 +1079,8 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
     try {
       setLoadingLabel('Saving manifest...');
-      await Promise.all(selectedManifestRows.map((row) => updateManifestRow(row)));
-      await refreshData({ keepManifestNumber: true });
+      await Promise.all(selectedManifestRows.map((row) => saveManifestRow(row, 'PATCH')));
+      await refreshData();
       setMessage(`Manifest ${selectedManifestNumber} saved.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Manifest save failed.');
@@ -1106,8 +1088,6 @@ export function DeliveryClient(_props: DeliveryPageData) {
       setLoadingLabel('');
     }
   }
-
-  const allCurrentRows = [...pickups, ...dropOffs];
 
   return (
     <div className="space-y-4">
@@ -1122,7 +1102,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h2 className="text-lg font-bold text-slate-950">Shipping & Delivery Control</h2>
+            <h2 className="text-lg font-bold text-slate-950">Shipping Control</h2>
             <p className="mt-1 text-sm text-slate-500">
               Manual pickups, drop offs, manifest history, and BOM release paperwork.
             </p>
@@ -1135,7 +1115,6 @@ export function DeliveryClient(_props: DeliveryPageData) {
             >
               Address Book
             </Link>
-
             <button
               type="button"
               onClick={() => addStop('incoming')}
@@ -1143,7 +1122,6 @@ export function DeliveryClient(_props: DeliveryPageData) {
             >
               Add Pickup
             </button>
-
             <button
               type="button"
               onClick={() => addStop('outgoing')}
@@ -1151,22 +1129,13 @@ export function DeliveryClient(_props: DeliveryPageData) {
             >
               Add Drop Off
             </button>
-
             <button
               type="button"
-              onClick={startNewManifest}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-            >
-              Start New Manifest
-            </button>
-
-            <button
-              type="button"
-              onClick={() => printElementById(`print-manifest-${currentManifestNumber}`)}
-              disabled={!allCurrentRows.length}
+              onClick={() => printElementById('print-selected-manifest')}
+              disabled={!selectedDateManifestRows.length}
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Print Current Manifest
+              Print Manifest
             </button>
           </div>
         </div>
@@ -1178,138 +1147,44 @@ export function DeliveryClient(_props: DeliveryPageData) {
         ) : null}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-4 print:hidden">
+      <div className="grid gap-4 lg:grid-cols-5 print:hidden">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-            Working Manifest
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-950">
-            {currentManifestNumber || 'Loading'}
-          </div>
-          <div className="mt-1 text-xs font-semibold text-slate-500">
-            New stops are added here until you start a new manifest.
-          </div>
+          <label className="block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+            Manifest Date
+          </label>
+          <input
+            type="date"
+            value={selectedManifestDate}
+            onChange={(event) => changeManifestDate(event.target.value)}
+            className="mt-2 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+          />
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-            Pickups
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-950">{pickups.length}</div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-            Drop Offs
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-950">{dropOffs.length}</div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-            Saved BOMs
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-950">{bomDrafts.length}</div>
-        </div>
+        <Stat label="Selected Manifest" value={selectedDateManifestNumber || 'DAI-Mâ€”'} />
+        <Stat label="Pickups" value={String(pickups.length)} />
+        <Stat label="Drop Offs" value={String(dropOffs.length)} />
+        <Stat label="Saved BOMs" value={String(bomDrafts.length)} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-base font-bold text-slate-950">Pickups on Working Manifest</h3>
-          <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-                <tr>
-                  <th className="px-3 py-3">Date</th>
-                  <th className="px-3 py-3">From</th>
-                  <th className="px-3 py-3">PO / Ref</th>
-                  <th className="px-3 py-3">Items</th>
-                  <th className="px-3 py-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
-                {pickups.length ? (
-                  pickups.map((row) => (
-                    <tr key={row.id} className="align-top hover:bg-slate-50">
-                      <td className="px-3 py-3">{row.date || '-'}</td>
-                      <td className="px-3 py-3 whitespace-pre-line">
-                        {displayStopAddress(row.fromLocation, row.fromAddress)}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div>{row.shipmentTransferId || '-'}</div>
-                        <div className="text-xs text-slate-500">{row.reference || ''}</div>
-                      </td>
-                      <td className="px-3 py-3 whitespace-pre-line">{row.items || '-'}</td>
-                      <td className="px-3 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedRow(row)}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                        >
-                          Open
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                      No pickups on the working manifest.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <h3 className="text-base font-bold text-slate-950">Pickups for Selected Date</h3>
+          <StopsTable
+            rows={pickups}
+            mode="pickup"
+            emptyText={`No pickups for ${selectedManifestDate}.`}
+            onOpen={setSelectedRow}
+          />
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-base font-bold text-slate-950">Drop Offs on Working Manifest</h3>
-          <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-                <tr>
-                  <th className="px-3 py-3">Date</th>
-                  <th className="px-3 py-3">To</th>
-                  <th className="px-3 py-3">PO / Ref</th>
-                  <th className="px-3 py-3">Items</th>
-                  <th className="px-3 py-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
-                {dropOffs.length ? (
-                  dropOffs.map((row) => (
-                    <tr key={row.id} className="align-top hover:bg-slate-50">
-                      <td className="px-3 py-3">{row.date || '-'}</td>
-                      <td className="px-3 py-3 whitespace-pre-line">
-                        {displayStopAddress(row.toLocation, row.toAddress)}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div>{row.shipmentTransferId || '-'}</div>
-                        <div className="text-xs text-slate-500">{row.reference || ''}</div>
-                      </td>
-                      <td className="px-3 py-3 whitespace-pre-line">{row.items || '-'}</td>
-                      <td className="px-3 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedRow(row)}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                        >
-                          Open
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                      No drop offs on the working manifest.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <h3 className="text-base font-bold text-slate-950">Drop Offs for Selected Date</h3>
+          <StopsTable
+            rows={dropOffs}
+            mode="dropoff"
+            emptyText={`No drop offs for ${selectedManifestDate}.`}
+            onOpen={setSelectedRow}
+          />
         </section>
       </div>
 
@@ -1319,42 +1194,59 @@ export function DeliveryClient(_props: DeliveryPageData) {
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
               <tr>
-                <th className="px-3 py-3">Manifest</th>
+                <th className="px-3 py-3">Date / Manifest</th>
                 <th className="px-3 py-3">Stops</th>
-                <th className="px-3 py-3">First Date</th>
+                <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
-              {groupedManifests.length ? (
-                groupedManifests.map(([manifestNumber, manifestRows]) => (
-                  <tr key={manifestNumber} className="hover:bg-slate-50">
-                    <td className="px-3 py-3 font-bold text-slate-950">{manifestNumber}</td>
-                    <td className="px-3 py-3">{manifestRows.length}</td>
-                    <td className="px-3 py-3">{manifestRows[0]?.date || '-'}</td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openManifest(manifestNumber)}
-                          className="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-800"
-                        >
-                          Open
-                        </button>
+              {groupedByDate.length ? (
+                groupedByDate.flatMap(([date, manifestsMap]) =>
+                  Array.from(manifestsMap.entries())
+                    .sort((a, b) => parseManifestNumber(b[0]) - parseManifestNumber(a[0]))
+                    .map(([manifestNumber, manifestRows], index) => (
+                      <tr key={`${date}-${manifestNumber}`} className="hover:bg-slate-50">
+                        <td className="px-3 py-3 font-bold text-slate-950">
+                          {index === 0 ? (
+                            <div className="mb-2 text-xs font-bold text-slate-500">{date}</div>
+                          ) : null}
+                          {manifestNumber}
+                        </td>
+                        <td className="px-3 py-3">{manifestRows.length}</td>
+                        <td className="px-3 py-3">Open</td>
+                        <td className="px-3 py-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openManifest(manifestNumber, date)}
+                              className="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-800"
+                            >
+                              Open
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                printElementById(`print-manifest-history-${date}-${manifestNumber}`)
+                              }
+                              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                            >
+                              Print
+                            </button>
+                          </div>
 
-                        <button
-                          type="button"
-                          onClick={() => printElementById(`print-manifest-${manifestNumber}`)}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                        >
-                          Print
-                        </button>
-                      </div>
-
-                      <PrintableManifest manifestNumber={manifestNumber} rows={manifestRows} />
-                    </td>
-                  </tr>
-                ))
+                          <PrintableManifest
+                            manifestNumber={manifestNumber}
+                            manifestDate={date}
+                            printId={`print-manifest-history-${date}-${manifestNumber}`}
+                            rows={manifestRows.filter(
+                              (row) => row.manifestNumber === manifestNumber && row.date === date
+                            )}
+                          />
+                        </td>
+                      </tr>
+                    ))
+                )
               ) : (
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
@@ -1387,7 +1279,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
                     <td className="px-3 py-3 font-bold text-slate-950">{bom.bomNumber}</td>
                     <td className="px-3 py-3">{bom.manifestNumber || '-'}</td>
                     <td className="px-3 py-3">{bom.reference || '-'}</td>
-                    <td className="px-3 py-3 whitespace-pre-line">{bom.shipTo || '-'}</td>
+                    <td className="whitespace-pre-line px-3 py-3">{bom.shipTo || '-'}</td>
                     <td className="px-3 py-3 text-right">
                       <button
                         type="button"
@@ -1396,7 +1288,6 @@ export function DeliveryClient(_props: DeliveryPageData) {
                       >
                         Print
                       </button>
-
                       <PrintableBom bom={bom} />
                     </td>
                   </tr>
@@ -1413,15 +1304,22 @@ export function DeliveryClient(_props: DeliveryPageData) {
         </div>
       </section>
 
-      <PrintableManifest manifestNumber={currentManifestNumber} rows={allCurrentRows} />
+      <PrintableManifest
+        manifestNumber={selectedDateManifestNumber}
+        manifestDate={selectedManifestDate}
+        printId="print-selected-manifest"
+        rows={selectedDateManifestRows}
+      />
 
       <ManifestModal
         manifestNumber={selectedManifestNumber}
+        manifestDate={selectedManifestDate}
         rows={selectedManifestRows}
         onClose={() => setSelectedManifestNumber('')}
         onSave={saveSelectedManifest}
-        onPrint={() => printElementById(`print-manifest-${selectedManifestNumber}`)}
-        onMakeWorking={makeSelectedManifestWorking}
+        onPrint={() =>
+          printElementById(`print-manifest-modal-${selectedManifestDate}-${selectedManifestNumber}`)
+        }
         onEditStop={setSelectedRow}
       />
 
@@ -1435,3 +1333,13 @@ export function DeliveryClient(_props: DeliveryPageData) {
     </div>
   );
 }
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{label}</div>
+      <div className="mt-2 text-2xl font-bold text-slate-950">{value}</div>
+    </div>
+  );
+}
+

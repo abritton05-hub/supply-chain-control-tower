@@ -3,7 +3,7 @@ import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { canSubmitPullRequests } from '@/lib/auth/roles';
 import { getCurrentUserEmail } from '@/lib/auth/session';
 import { logActivity } from '@/lib/activity/log-activity';
-import { supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 
 type PullRequestLineInput = {
   item_id?: string;
@@ -18,6 +18,12 @@ type PullRequestInput = {
   request_number?: string;
   requested_by?: string;
   lines?: PullRequestLineInput[];
+};
+
+type NotificationError = {
+  message: string;
+  code?: string;
+  details?: string | null;
 };
 
 function clean(value: string | null | undefined) {
@@ -35,6 +41,72 @@ function normalizeLine(line: PullRequestLineInput) {
   };
 }
 
+async function createPullRequestNotification(
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
+  pullRequest: { id: string; request_number: string | null },
+  requestedBy: string
+) {
+  const href = `/pull-requests/${pullRequest.id}`;
+  const requestNumber = pullRequest.request_number || pullRequest.id;
+  const payload: Record<string, unknown> = {
+    title: `New pull request ${requestNumber}`,
+    message: `${requestedBy} submitted pull request ${requestNumber}.`,
+    href,
+    link: href,
+    type: 'pull_request',
+    category: 'pull_request',
+    pull_request_id: pullRequest.id,
+    entity_id: pullRequest.id,
+    is_read: false,
+    read_at: null,
+  };
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const { error } = await supabase.from('notifications').insert(payload);
+
+    if (!error) {
+      return null;
+    }
+
+    if (isMissingNotificationsTable(error)) {
+      return error;
+    }
+
+    const missingColumn = missingColumnFromError(error);
+    if (missingColumn && missingColumn in payload) {
+      delete payload[missingColumn];
+      continue;
+    }
+
+    return error;
+  }
+
+  return null;
+}
+
+function isMissingNotificationsTable(error: NotificationError) {
+  const message = error.message.toLowerCase();
+
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    (message.includes('relation') && message.includes('notifications')) ||
+    (message.includes('table') && message.includes('notifications'))
+  );
+}
+
+function missingColumnFromError(error: NotificationError) {
+  const message = error.message;
+  const quotedColumn = message.match(/'([^']+)' column/i)?.[1];
+  if (quotedColumn) return quotedColumn;
+
+  const relationColumn = message.match(/column\s+(?:public\.)?notifications\.([a-zA-Z0-9_]+)\s+does not exist/i)?.[1];
+  if (relationColumn) return relationColumn;
+
+  const detailsColumn = error.details?.match(/column\s+"?([a-zA-Z0-9_]+)"?/i)?.[1];
+  return detailsColumn || '';
+}
+
 export async function GET() {
   try {
     const profile = await getCurrentUserProfile();
@@ -49,7 +121,7 @@ export async function GET() {
       );
     }
 
-    const supabase = await supabaseServer();
+    const supabase = await supabaseAdmin();
 
     const { data, error } = await supabase
       .from('pull_requests')
@@ -60,8 +132,13 @@ export async function GET() {
         status,
         requested_by,
         created_at,
+        resolved_by,
+        resolved_at,
+        fulfilled_by,
+        fulfilled_at,
         pull_request_lines (
           id,
+          request_id,
           item_id,
           part_number,
           description,
@@ -91,8 +168,7 @@ export async function GET() {
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error ? error.message : 'Failed to load pull requests.',
+        message: error instanceof Error ? error.message : 'Failed to load pull requests.',
       },
       { status: 500 }
     );
@@ -100,6 +176,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let createdRequestId = '';
+
   try {
     const profile = await getCurrentUserProfile();
 
@@ -114,7 +192,7 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as PullRequestInput;
-    const supabase = await supabaseServer();
+    const supabase = await supabaseAdmin();
     const currentUserEmail = await getCurrentUserEmail();
 
     const requestNumber = clean(body.request_number);
@@ -123,9 +201,7 @@ export async function POST(request: Request) {
     const lines = rawLines
       .map(normalizeLine)
       .filter(
-        (line) =>
-          line.quantity > 0 &&
-          (line.item_id || line.part_number || line.description)
+        (line) => line.quantity > 0 && (line.item_id || line.part_number || line.description)
       );
 
     if (!requestNumber) {
@@ -168,8 +244,10 @@ export async function POST(request: Request) {
       );
     }
 
+    createdRequestId = pullRequest.id;
+
     const lineRows = lines.map((line) => ({
-      pull_request_id: pullRequest.id,
+      request_id: pullRequest.id,
       item_id: line.item_id,
       part_number: line.part_number,
       description: line.description,
@@ -178,11 +256,11 @@ export async function POST(request: Request) {
       notes: line.notes,
     }));
 
-    const { error: lineError } = await supabase
-      .from('pull_request_lines')
-      .insert(lineRows);
+    const { error: lineError } = await supabase.from('pull_request_lines').insert(lineRows);
 
     if (lineError) {
+      await supabase.from('pull_requests').delete().eq('id', pullRequest.id);
+
       return NextResponse.json(
         {
           ok: false,
@@ -192,7 +270,13 @@ export async function POST(request: Request) {
       );
     }
 
-    await logActivity({
+    const notificationError = await createPullRequestNotification(
+      supabase,
+      pullRequest,
+      requestedBy
+    );
+
+    const activity = await logActivity({
       entityType: 'pull_request',
       entityId: pullRequest.id,
       actionType: 'PULL_REQUEST_CREATED',
@@ -205,17 +289,40 @@ export async function POST(request: Request) {
       userName: requestedBy,
     });
 
+    if (notificationError) {
+      console.error('Pull request notification failed', {
+        pullRequestId: pullRequest.id,
+        error: notificationError.message,
+      });
+    }
+
+    if (!activity.ok) {
+      console.error('Pull request activity logging failed', {
+        pullRequestId: pullRequest.id,
+        error: 'message' in activity ? activity.message : 'Failed to write activity log.',
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       message: `Pull request ${pullRequest.request_number} submitted successfully.`,
       id: pullRequest.id,
     });
   } catch (error) {
+    if (createdRequestId) {
+      try {
+        const supabase = await supabaseAdmin();
+        await supabase.from('pull_request_lines').delete().eq('request_id', createdRequestId);
+        await supabase.from('pull_requests').delete().eq('id', createdRequestId);
+      } catch {
+        // Best effort cleanup only.
+      }
+    }
+
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error ? error.message : 'Failed to submit pull request.',
+        message: error instanceof Error ? error.message : 'Failed to submit pull request.',
       },
       { status: 500 }
     );

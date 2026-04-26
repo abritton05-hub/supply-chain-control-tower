@@ -53,7 +53,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
 
   return (
     <aside
-      className={`flex-shrink-0 border-b border-slate-300 bg-white text-slate-900 transition-all duration-300 print:hidden lg:h-screen lg:border-b-0 lg:border-r ${
+      className={`sticky top-0 z-30 flex-shrink-0 border-b border-slate-300 bg-white text-slate-900 shadow-sm transition-all duration-300 print:hidden lg:h-screen lg:border-b-0 lg:border-r lg:shadow-none ${
         collapsed ? 'lg:w-24 lg:p-3' : 'lg:w-[330px] lg:p-6'
       }`}
     >
@@ -126,7 +126,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
         )}
       </div>
 
-      <nav className="flex gap-2 overflow-x-auto px-3 py-3 lg:block lg:space-y-3 lg:overflow-visible lg:p-0">
+      <nav className="scrollbar-thin flex gap-2 overflow-x-auto px-3 py-2 lg:block lg:space-y-3 lg:overflow-visible lg:p-0">
         {navLinks.map((link) => {
           const matchHrefs = [link.href, ...(link.matchHrefs ?? [])];
           const active = matchHrefs.some(
@@ -138,14 +138,16 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
               key={link.href}
               href={link.href}
               title={collapsed ? link.label : undefined}
-              className={`flex items-center gap-4 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+              className={`flex min-h-11 shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition lg:gap-4 lg:px-4 lg:py-3 ${
                 active
                   ? 'bg-slate-100 text-slate-950 shadow-sm'
                   : 'bg-white text-slate-800 hover:bg-slate-100'
               }`}
             >
-              <span className="text-[1.7rem] leading-none">{link.icon}</span>
-              <span className={collapsed ? 'hidden' : 'text-[1rem]'}>{link.label}</span>
+              <span className="text-[1.35rem] leading-none lg:text-[1.7rem]">{link.icon}</span>
+              <span className={`${collapsed ? 'hidden' : 'max-w-[9rem] truncate text-sm lg:max-w-none lg:text-[1rem]'}`}>
+                {link.label}
+              </span>
             </Link>
           );
         })}

@@ -2,21 +2,25 @@
 
 import { logActivity } from '@/lib/activity/log-activity';
 import { getCurrentUserEmail } from '@/lib/auth/session';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 import { supabaseServer } from '@/lib/supabase/server';
 import type { ImportPreview } from '@/lib/import-workflow/types';
-import {
-  buildReceivingPreview,
-  type ReceivingMatch,
-} from './receiving-import';
+import { buildReceivingPreview, type ReceivingMatch } from './receiving-import';
 import type { ReceivingImportInput } from './types';
+
+const SUPPLY_CATEGORY = 'Supply';
+const SUPPLY_LOCATION = 'SUPPLY';
+const SUPPLY_SITE = 'SEA991';
 
 type ReceiveInput = {
   item_id?: string;
   part_number?: string;
+  description?: string;
   quantity: number;
   reference?: string;
   notes?: string;
   performed_by?: string;
+  is_supply?: boolean;
 };
 
 type PreviewResult =
@@ -38,13 +42,33 @@ type BulkImportResult = {
 };
 
 type InventoryLookupRow = {
+  id?: string;
   item_id: string;
   part_number: string | null;
   description: string | null;
+  is_supply?: boolean | null;
+};
+
+type ReceiptResolution = {
+  itemId: string;
+  partNumber: string;
+  description: string;
+  isSupply: boolean;
 };
 
 function clean(value: string | null | undefined) {
   return value?.trim() || '';
+}
+
+function supplyItemId(partNumber: string, description: string) {
+  const seed = clean(partNumber) || clean(description) || `SUPPLY-${Date.now()}`;
+  const normalized = seed
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 36);
+
+  return `SUPPLY-${normalized || Date.now()}`;
 }
 
 async function loadInventoryLookup() {
@@ -52,7 +76,7 @@ async function loadInventoryLookup() {
 
   const { data, error } = await supabase
     .from('inventory')
-    .select('item_id,part_number,description')
+    .select('id,item_id,part_number,description,is_supply')
     .order('item_id', { ascending: true });
 
   if (error) {
@@ -109,22 +133,155 @@ function buildMatchFinder(inventory: InventoryLookupRow[]) {
   };
 }
 
-export async function receiveInventoryItem(input: ReceiveInput) {
-  const supabase = await supabaseServer();
+async function resolveSupplyReceipt(
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
+  input: ReceiveInput
+): Promise<ReceiptResolution> {
+  const description = clean(input.description);
+  const partNumber = clean(input.part_number);
 
+  if (!description && !partNumber) {
+    throw new Error('Supply receipts need a description or part number.');
+  }
+
+  if (partNumber) {
+    const { data: supplyByPart, error: supplyByPartError } = await supabase
+      .from('inventory')
+      .select('item_id,part_number,description,is_supply')
+      .eq('part_number', partNumber)
+      .eq('is_supply', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (supplyByPartError) {
+      throw new Error(`Could not resolve supply item: ${supplyByPartError.message}`);
+    }
+
+    if (supplyByPart?.item_id) {
+      return {
+        itemId: supplyByPart.item_id,
+        partNumber: supplyByPart.part_number ?? partNumber,
+        description: (supplyByPart.description ?? description) || supplyByPart.item_id,
+        isSupply: true,
+      };
+    }
+  }
+
+  if (description) {
+    const { data: supplyByDescription, error: supplyByDescriptionError } = await supabase
+      .from('inventory')
+      .select('item_id,part_number,description,is_supply')
+      .eq('description', description)
+      .eq('is_supply', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (supplyByDescriptionError) {
+      throw new Error(`Could not resolve supply item: ${supplyByDescriptionError.message}`);
+    }
+
+    if (supplyByDescription?.item_id) {
+      return {
+        itemId: supplyByDescription.item_id,
+        partNumber:
+          (supplyByDescription.part_number ?? partNumber) || supplyByDescription.item_id,
+        description: supplyByDescription.description ?? description,
+        isSupply: true,
+      };
+    }
+  }
+
+  const itemId = supplyItemId(partNumber, description);
+  const { data: insertedSupply, error: insertSupplyError } = await supabase
+    .from('inventory')
+    .insert({
+      item_id: itemId,
+      part_number: partNumber || itemId,
+      description: description || partNumber || itemId,
+      category: SUPPLY_CATEGORY,
+      location: SUPPLY_LOCATION,
+      qty_on_hand: 0,
+      reorder_point: 0,
+      is_supply: true,
+      site: SUPPLY_SITE,
+    })
+    .select('item_id,part_number,description,is_supply')
+    .single();
+
+  if (insertSupplyError || !insertedSupply?.item_id) {
+    throw new Error(insertSupplyError?.message || 'Could not create supply inventory item.');
+  }
+
+  return {
+    itemId: insertedSupply.item_id,
+    partNumber: (insertedSupply.part_number ?? partNumber) || insertedSupply.item_id,
+    description: (insertedSupply.description ?? description) || insertedSupply.item_id,
+    isSupply: true,
+  };
+}
+
+async function resolveStandardReceipt(
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
+  input: ReceiveInput
+): Promise<ReceiptResolution> {
+  const rawItemId = clean(input.item_id);
+  const rawPartNumber = clean(input.part_number);
+  const rawDescription = clean(input.description);
+
+  if (!rawItemId && !rawPartNumber) {
+    throw new Error('Select an inventory item first.');
+  }
+
+  let resolvedItemId = rawItemId;
+  let resolvedPartNumber = rawPartNumber;
+  let resolvedDescription = rawDescription;
+
+  if (!resolvedItemId && resolvedPartNumber) {
+    const { data: inventoryMatch, error: inventoryMatchError } = await supabase
+      .from('inventory')
+      .select('item_id,part_number,description,is_supply')
+      .eq('part_number', resolvedPartNumber)
+      .limit(1)
+      .maybeSingle();
+
+    if (inventoryMatchError) {
+      throw new Error(`Could not resolve part number: ${inventoryMatchError.message}`);
+    }
+
+    if (!inventoryMatch?.item_id) {
+      throw new Error(`No inventory item found for part number ${resolvedPartNumber}.`);
+    }
+
+    resolvedItemId = inventoryMatch.item_id;
+    resolvedPartNumber = inventoryMatch.part_number ?? resolvedPartNumber;
+    resolvedDescription = inventoryMatch.description ?? resolvedDescription;
+  }
+
+  return {
+    itemId: resolvedItemId,
+    partNumber: resolvedPartNumber || resolvedItemId,
+    description: resolvedDescription || resolvedPartNumber || resolvedItemId,
+    isSupply: false,
+  };
+}
+
+async function resolveReceiptTarget(
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
+  input: ReceiveInput
+): Promise<ReceiptResolution> {
+  if (input.is_supply) {
+    return resolveSupplyReceipt(supabase, input);
+  }
+
+  return resolveStandardReceipt(supabase, input);
+}
+
+export async function receiveInventoryItem(input: ReceiveInput) {
   try {
-    const rawItemId = clean(input.item_id);
-    const rawPartNumber = clean(input.part_number);
+    const supabase = await supabaseAdmin();
     const quantity = Number(input.quantity);
     const currentUserEmail = await getCurrentUserEmail();
     const performedBy = clean(input.performed_by) || currentUserEmail || 'unknown';
-
-    if (!rawItemId && !rawPartNumber) {
-      return {
-        ok: false,
-        message: 'Select an inventory item first.',
-      };
-    }
 
     if (!Number.isFinite(quantity) || quantity <= 0) {
       return {
@@ -133,37 +290,10 @@ export async function receiveInventoryItem(input: ReceiveInput) {
       };
     }
 
-    let resolvedItemId = rawItemId;
-    let resolvedPartNumber = rawPartNumber;
-
-    if (!resolvedItemId && resolvedPartNumber) {
-      const { data: inventoryMatch, error: inventoryMatchError } = await supabase
-        .from('inventory')
-        .select('item_id,part_number')
-        .eq('part_number', resolvedPartNumber)
-        .limit(1)
-        .maybeSingle();
-
-      if (inventoryMatchError) {
-        return {
-          ok: false,
-          message: `Could not resolve part number: ${inventoryMatchError.message}`,
-        };
-      }
-
-      if (!inventoryMatch?.item_id) {
-        return {
-          ok: false,
-          message: `No inventory item found for part number ${resolvedPartNumber}.`,
-        };
-      }
-
-      resolvedItemId = inventoryMatch.item_id;
-      resolvedPartNumber = inventoryMatch.part_number ?? resolvedPartNumber;
-    }
+    const resolved = await resolveReceiptTarget(supabase, input);
 
     const { data: transactionId, error } = await supabase.rpc('receive_inventory_item', {
-      p_item_id: resolvedItemId,
+      p_item_id: resolved.itemId,
       p_quantity: quantity,
       p_reference: clean(input.reference) || null,
       p_notes: clean(input.notes) || null,
@@ -188,31 +318,35 @@ export async function receiveInventoryItem(input: ReceiveInput) {
     const activity = await logActivity({
       entityType: 'inventory_transaction',
       entityId: String(transactionId),
-      actionType: 'RECEIPT_POSTED',
-      title: `Receipt posted for ${resolvedPartNumber || resolvedItemId}`,
+      actionType: resolved.isSupply ? 'SUPPLY_RECEIPT_POSTED' : 'RECEIPT_POSTED',
+      title: `${resolved.isSupply ? 'Supply receipt' : 'Receipt'} posted for ${
+        resolved.partNumber || resolved.itemId
+      }`,
       details: {
-        item_id: resolvedItemId,
-        part_number: resolvedPartNumber || null,
+        item_id: resolved.itemId,
+        part_number: resolved.partNumber || null,
+        description: resolved.description || null,
         quantity,
         reference: clean(input.reference) || null,
         notes: clean(input.notes) || null,
+        is_supply: resolved.isSupply,
       },
-      referenceNumber: clean(input.reference) || resolvedItemId || null,
+      referenceNumber: clean(input.reference) || resolved.itemId || null,
       userName: performedBy,
     });
 
     if (!activity.ok) {
-      return {
-        ok: true,
-        message: 'Receipt posted, but activity logging failed.',
+      console.error('Receiving activity logging failed after receipt posted.', {
         transactionId: String(transactionId),
-      };
+        itemId: resolved.itemId,
+        partNumber: resolved.partNumber,
+        message: 'message' in activity ? activity.message : 'Failed to write activity log.',
+      });
     }
 
     return {
       ok: true,
       message: 'Receipt posted successfully.',
-      transactionId: String(transactionId),
     };
   } catch (err: any) {
     return {
@@ -295,10 +429,12 @@ export async function importReceivingReceipts(
       const result = await receiveInventoryItem({
         item_id: row.record.target_item_id || row.record.item_id,
         part_number: row.record.target_part_number || row.record.part_number,
+        description: row.record.target_description || row.record.description,
         quantity: Number(row.record.quantity) || 0,
         reference: row.record.reference,
         notes: row.record.notes,
         performed_by: row.record.performed_by,
+        is_supply: false,
       });
 
       if (result.ok) {
