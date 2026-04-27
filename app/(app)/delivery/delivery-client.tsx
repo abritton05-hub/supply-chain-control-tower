@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StickyNotes } from '@/components/sticky-notes';
 import {
   buildShippingManifestLabelPayload,
@@ -72,6 +72,19 @@ type BomDraft = {
   contact: string;
   items: string;
   notes: string;
+};
+
+type SignedBomFile = {
+  id: string;
+  manifest_number: string | null;
+  bom_number: string | null;
+  stop_id: string | null;
+  file_name: string;
+  file_path: string;
+  file_type: string | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  signed_url: string | null;
 };
 
 type DeliveryClientProps = DeliveryPageData & {
@@ -162,6 +175,20 @@ function oneLine(value: string) {
     .map((line) => line.trim())
     .filter(Boolean)
     .join(' ');
+}
+
+function formatUploadedAt(value: string) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function formatStopLineItem(line: StopLineItem) {
@@ -691,15 +718,20 @@ function StopModal({
   onClose,
   onSave,
   onCreateBom,
+  onUploadSignedBom,
+  onViewSignedBoms,
 }: {
   row: StopRow | null;
   locations: ShippingLocation[];
   onClose: () => void;
   onSave: (row: StopRow, exportLabelsAfterSave: boolean) => void;
   onCreateBom: (row: StopRow) => void;
+  onUploadSignedBom: (row: StopRow, file: File) => Promise<void>;
+  onViewSignedBoms: (row: StopRow) => void;
 }) {
   const [draft, setDraft] = useState<StopRow | null>(row);
   const [exportLabelsAfterSave, setExportLabelsAfterSave] = useState(true);
+  const signedBomInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setDraft(row);
@@ -1040,6 +1072,37 @@ function StopModal({
               Create BOM
             </button>
           ) : null}
+
+          {draft.direction === 'outgoing' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => signedBomInputRef.current?.click()}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              >
+                Upload Signed BOM
+              </button>
+              <button
+                type="button"
+                onClick={() => onViewSignedBoms(draft)}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              >
+                View Signed BOMs
+              </button>
+              <input
+                ref={signedBomInputRef}
+                type="file"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  await onUploadSignedBom(draft, file);
+                  event.target.value = '';
+                }}
+              />
+            </>
+          ) : null}
         </div>
       </div>
     </div>
@@ -1111,6 +1174,88 @@ function NumberInput({
         className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
       />
     </label>
+  );
+}
+
+function SignedBomFilesModal({
+  title,
+  files,
+  loading,
+  onClose,
+}: {
+  title: string;
+  files: SignedBomFile[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4">
+      <div className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-3">
+          <div>
+            <h3 className="text-lg font-bold text-slate-950">{title}</h3>
+            <p className="mt-1 text-sm text-slate-500">Signed BOM uploads for this record.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 max-h-[60vh] overflow-auto rounded-xl border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+              <tr>
+                <th className="px-3 py-3">File Name</th>
+                <th className="px-3 py-3">Uploaded By</th>
+                <th className="px-3 py-3">Uploaded</th>
+                <th className="px-3 py-3 text-right">Open</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {loading ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-8 text-center text-sm font-semibold text-slate-500">
+                    Loading signed BOM files...
+                  </td>
+                </tr>
+              ) : files.length ? (
+                files.map((file) => (
+                  <tr key={file.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-3 font-semibold text-slate-900">{file.file_name}</td>
+                    <td className="px-3 py-3">{file.uploaded_by || '-'}</td>
+                    <td className="px-3 py-3">{formatUploadedAt(file.uploaded_at)}</td>
+                    <td className="px-3 py-3 text-right">
+                      {file.signed_url ? (
+                        <a
+                          href={file.signed_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Open/View
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-400">Unavailable</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
+                    No signed BOM files uploaded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1616,6 +1761,16 @@ export function DeliveryClient({
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
   const [message, setMessage] = useState('');
   const [loadingLabel, setLoadingLabel] = useState('');
+  const [signedBomFiles, setSignedBomFiles] = useState<SignedBomFile[]>([]);
+  const [signedBomModalOpen, setSignedBomModalOpen] = useState(false);
+  const [signedBomModalTitle, setSignedBomModalTitle] = useState('Signed BOM Files');
+  const [signedBomListLoading, setSignedBomListLoading] = useState(false);
+  const [signedBomContext, setSignedBomContext] = useState<{
+    manifestNumber: string;
+    bomNumber?: string;
+    stopId?: string;
+  } | null>(null);
+  const bomUploadInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   async function refreshData() {
     const [manifestRows, bomRows, shippingLocations] = await Promise.all([
@@ -1727,6 +1882,67 @@ export function DeliveryClient({
     setSelectedManifestDate(value);
     setSelectedManifestNumber('');
     setSelectedRow(null);
+  }
+
+  async function fetchSignedBomFiles(filters: {
+    manifestNumber: string;
+    bomNumber?: string;
+    stopId?: string;
+  }) {
+    const params = new URLSearchParams({ manifest_number: filters.manifestNumber });
+    if (filters.bomNumber) params.set('bom_number', filters.bomNumber);
+    if (filters.stopId) params.set('stop_id', filters.stopId);
+
+    const res = await fetch(`/api/shipping/signed-boms?${params.toString()}`, {
+      cache: 'no-store',
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.message || 'Failed to load signed BOM files.');
+    return (data.rows || []) as SignedBomFile[];
+  }
+
+  async function uploadSignedBomFile(file: File, context: {
+    manifestNumber: string;
+    bomNumber?: string;
+    stopId?: string;
+  }) {
+    const form = new FormData();
+    form.set('file', file);
+    form.set('manifest_number', context.manifestNumber);
+    if (context.bomNumber) form.set('bom_number', context.bomNumber);
+    if (context.stopId) form.set('stop_id', context.stopId);
+
+    const res = await fetch('/api/shipping/signed-boms', {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.message || 'Upload failed.');
+  }
+
+  async function openSignedBomList(context: {
+    manifestNumber: string;
+    bomNumber?: string;
+    stopId?: string;
+    title: string;
+  }) {
+    try {
+      setSignedBomModalOpen(true);
+      setSignedBomModalTitle(context.title);
+      setSignedBomContext({
+        manifestNumber: context.manifestNumber,
+        bomNumber: context.bomNumber,
+        stopId: context.stopId,
+      });
+      setSignedBomListLoading(true);
+      const files = await fetchSignedBomFiles(context);
+      setSignedBomFiles(files);
+    } catch (error) {
+      setSignedBomFiles([]);
+      setMessage(error instanceof Error ? error.message : 'Could not load signed BOM files.');
+    } finally {
+      setSignedBomListLoading(false);
+    }
   }
 
   async function addStop(direction: Direction) {
@@ -1846,6 +2062,61 @@ export function DeliveryClient({
       setMessage(`BOM ${bomNumber} created.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'BOM creation failed.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleUploadSignedBomForBom(bom: BomDraft, file: File) {
+    try {
+      setLoadingLabel('Uploading signed BOM...');
+      await uploadSignedBomFile(file, {
+        manifestNumber: bom.manifestNumber,
+        bomNumber: bom.bomNumber,
+        stopId: bom.sourceStopId || undefined,
+      });
+      setMessage(`Signed BOM uploaded for ${bom.bomNumber}.`);
+
+      if (
+        signedBomContext &&
+        signedBomContext.manifestNumber === bom.manifestNumber &&
+        signedBomContext.bomNumber === bom.bomNumber
+      ) {
+        const files = await fetchSignedBomFiles({
+          manifestNumber: bom.manifestNumber,
+          bomNumber: bom.bomNumber,
+          stopId: bom.sourceStopId || undefined,
+        });
+        setSignedBomFiles(files);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Signed BOM upload failed.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleUploadSignedBomForStop(row: StopRow, file: File) {
+    try {
+      setLoadingLabel('Uploading signed BOM...');
+      await uploadSignedBomFile(file, {
+        manifestNumber: row.manifestNumber,
+        stopId: row.id,
+      });
+      setMessage(`Signed BOM uploaded for stop ${row.id}.`);
+      if (
+        signedBomContext &&
+        signedBomContext.manifestNumber === row.manifestNumber &&
+        signedBomContext.stopId === row.id
+      ) {
+        const files = await fetchSignedBomFiles({
+          manifestNumber: row.manifestNumber,
+          stopId: row.id,
+        });
+        setSignedBomFiles(files);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Signed BOM upload failed.');
     } finally {
       setLoadingLabel('');
     }
@@ -2204,7 +2475,7 @@ export function DeliveryClient({
                 <th className="px-3 py-3">Manifest</th>
                 <th className="px-3 py-3">Reference</th>
                 <th className="px-3 py-3">Ship To</th>
-                <th className="px-3 py-3 text-right">Print</th>
+                <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
@@ -2216,13 +2487,50 @@ export function DeliveryClient({
                     <td className="px-3 py-3">{bom.reference || '-'}</td>
                     <td className="whitespace-pre-line px-3 py-3">{bom.shipTo || '-'}</td>
                     <td className="px-3 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                      >
-                        Print
-                      </button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Print
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => bomUploadInputRefs.current[bom.bomNumber]?.click()}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Upload Signed BOM
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openSignedBomList({
+                              manifestNumber: bom.manifestNumber,
+                              bomNumber: bom.bomNumber,
+                              stopId: bom.sourceStopId || undefined,
+                              title: `Signed BOMs · ${bom.bomNumber}`,
+                            })
+                          }
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          View Signed BOMs
+                        </button>
+                        <input
+                          ref={(node) => {
+                            bomUploadInputRefs.current[bom.bomNumber] = node;
+                          }}
+                          type="file"
+                          accept="image/*,.pdf"
+                          className="hidden"
+                          onChange={async (event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            await handleUploadSignedBomForBom(bom, file);
+                            event.target.value = '';
+                          }}
+                        />
+                      </div>
                       <PrintableBom bom={bom} />
                     </td>
                   </tr>
@@ -2265,7 +2573,27 @@ export function DeliveryClient({
         onClose={() => setSelectedRow(null)}
         onSave={handleSaveRow}
         onCreateBom={handleCreateBom}
+        onUploadSignedBom={handleUploadSignedBomForStop}
+        onViewSignedBoms={(row) =>
+          openSignedBomList({
+            manifestNumber: row.manifestNumber,
+            stopId: row.id,
+            title: `Signed BOMs · Stop ${row.id}`,
+          })
+        }
       />
+
+      {signedBomModalOpen ? (
+        <SignedBomFilesModal
+          title={signedBomModalTitle}
+          files={signedBomFiles}
+          loading={signedBomListLoading}
+          onClose={() => {
+            setSignedBomModalOpen(false);
+            setSignedBomContext(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2278,4 +2606,3 @@ function Stat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
