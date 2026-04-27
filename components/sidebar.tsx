@@ -13,34 +13,30 @@ const nav: NavGroup[] = [
     title: 'Dashboards',
     links: [
       { href: '/executive-dashboard', label: 'Executive Dashboard' },
-      { href: '/control-tower', label: 'Control Tower' },
-      { href: '/inventory-risk', label: 'Inventory Risk' },
-      { href: '/freight-dashboard', label: 'Freight Dashboard' },
       { href: '/project-dashboard', label: 'Project Dashboard' },
-      { href: '/traceability-dashboard', label: 'Traceability Dashboard' },
     ],
   },
   {
-    title: 'Operations',
+    title: 'Core Operations',
     links: [
-      { href: '/inventory', label: 'Inventory Database' },
-      { href: '/transactions', label: 'Inventory Transactions' },
-      { href: '/serial-traceability', label: 'Serial Traceability' },
-      { href: '/projects-builds', label: 'Projects / Builds' },
-      { href: '/shipment-log', label: 'Shipment Log' },
-      { href: '/freight-quotes', label: 'Freight Quotes' },
-      { href: '/open-pos', label: 'Open POs' },
+      { href: '/inventory', label: 'Inventory' },
+      { href: '/projects-builds', label: 'Kit Tracker' },
+      { href: '/shipment-log', label: 'Receiving' },
       { href: '/bom', label: 'Bill of Materials' },
+      { href: '/transactions', label: 'Transactions' },
     ],
+  },
+  {
+    title: 'Delivery',
+    links: [{ href: '/driver-manifest', label: 'Driver Manifest' }],
   },
   {
     title: 'Master Data',
-    links: [
-      { href: '/vendors', label: 'Vendors' },
-      { href: '/locations', label: 'Locations' },
-      { href: '/departments', label: 'Departments' },
-      { href: '/users', label: 'Users' },
-    ],
+    links: [{ href: '/locations', label: 'Locations' }],
+  },
+  {
+    title: 'Admin',
+    links: [{ href: '/users', label: 'Users / Access' }],
   },
 ];
 
