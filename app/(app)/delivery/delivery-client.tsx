@@ -4,6 +4,8 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StickyNotes } from '@/components/sticky-notes';
+import { DELIVERY_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
+import type { DeliveryDraftPayload } from '@/lib/ai/intake/types';
 import {
   buildShippingManifestLabelPayload,
   downloadLabelPayloadsCsv
@@ -1765,6 +1767,8 @@ export function DeliveryClient({
   const [signedBomModalOpen, setSignedBomModalOpen] = useState(false);
   const [signedBomModalTitle, setSignedBomModalTitle] = useState('Signed BOM Files');
   const [signedBomListLoading, setSignedBomListLoading] = useState(false);
+  const [intakeDraftApplied, setIntakeDraftApplied] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [signedBomContext, setSignedBomContext] = useState<{
     manifestNumber: string;
     bomNumber?: string;
@@ -1793,11 +1797,80 @@ export function DeliveryClient({
         setMessage(error instanceof Error ? error.message : 'Shipping data failed to load.');
       } finally {
         setLoadingLabel('');
+        setDataLoaded(true);
       }
     }
 
     init();
   }, []);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (intakeDraftApplied) return;
+
+    const rawDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
+    if (!rawDraft) {
+      setIntakeDraftApplied(true);
+      return;
+    }
+
+    try {
+      const draft = JSON.parse(rawDraft) as Partial<DeliveryDraftPayload>;
+      if (draft.direction !== 'pickup' && draft.direction !== 'delivery') {
+        throw new Error('AI intake draft direction was not recognized.');
+      }
+
+      const requestedDate = clean(draft.requested_date) || selectedManifestDate || today();
+      const direction: Direction = draft.direction === 'pickup' ? 'incoming' : 'outgoing';
+      const manifestNumber = manifestNumberForDate(requestedDate, activeRows, rows);
+      const baseRow = emptyStop(direction, manifestNumber, requestedDate, locations);
+
+      const pickupLocation = clean(draft.pickup_location);
+      const dropoffLocation = clean(draft.dropoff_location);
+
+      const fromLocation =
+        direction === 'incoming'
+          ? pickupLocation
+          : pickupLocation || baseRow.fromLocation || DEFAULT_SITE;
+      const toLocation =
+        direction === 'incoming'
+          ? dropoffLocation || baseRow.toLocation || DEFAULT_SITE
+          : dropoffLocation;
+
+      const contactParts = [
+        clean(draft.contact_name),
+        clean(draft.contact_phone),
+        clean(draft.contact_email),
+      ].filter(Boolean);
+
+      const draftRow: StopRow = {
+        ...baseRow,
+        date: requestedDate,
+        manifestNumber,
+        title: clean(draft.company_name) || baseRow.title,
+        time: clean(draft.requested_time),
+        shipmentTransferId: clean(draft.shipment_transfer_id),
+        reference: clean(draft.project_or_work_order) || clean(draft.shipment_transfer_id),
+        fromLocation,
+        fromAddress: fromLocation ? addressForLocation(locations, fromLocation) : '',
+        toLocation,
+        toAddress: toLocation ? addressForLocation(locations, toLocation) : '',
+        contact: contactParts.join(' | '),
+        items: clean(draft.items),
+        notes: clean(draft.notes),
+      };
+
+      setSelectedManifestDate(requestedDate);
+      setSelectedManifestNumber(manifestNumber);
+      setSelectedRow(draftRow);
+      setMessage('AI intake draft loaded. Review and click Save to add this stop to the manifest.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'AI intake draft could not be loaded.');
+    } finally {
+      window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
+      setIntakeDraftApplied(true);
+    }
+  }, [activeRows, dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
 
   useEffect(() => {
     if (initialManifestFocusApplied || !focusedManifestNumber || !rows.length) return;
