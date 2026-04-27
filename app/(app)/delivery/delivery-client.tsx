@@ -1768,6 +1768,7 @@ export function DeliveryClient({
   const [signedBomModalTitle, setSignedBomModalTitle] = useState('Signed BOM Files');
   const [signedBomListLoading, setSignedBomListLoading] = useState(false);
   const [intakeDraftApplied, setIntakeDraftApplied] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [signedBomContext, setSignedBomContext] = useState<{
     manifestNumber: string;
     bomNumber?: string;
@@ -1796,6 +1797,7 @@ export function DeliveryClient({
         setMessage(error instanceof Error ? error.message : 'Shipping data failed to load.');
       } finally {
         setLoadingLabel('');
+        setDataLoaded(true);
       }
     }
 
@@ -1803,6 +1805,7 @@ export function DeliveryClient({
   }, []);
 
   useEffect(() => {
+    if (!dataLoaded) return;
     if (intakeDraftApplied) return;
 
     const rawDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
@@ -1813,6 +1816,10 @@ export function DeliveryClient({
 
     try {
       const draft = JSON.parse(rawDraft) as Partial<DeliveryDraftPayload>;
+      if (draft.direction !== 'pickup' && draft.direction !== 'delivery') {
+        throw new Error('AI intake draft direction was not recognized.');
+      }
+
       const requestedDate = clean(draft.requested_date) || selectedManifestDate || today();
       const direction: Direction = draft.direction === 'pickup' ? 'incoming' : 'outgoing';
       const manifestNumber = manifestNumberForDate(requestedDate, activeRows, rows);
@@ -1840,9 +1847,10 @@ export function DeliveryClient({
         ...baseRow,
         date: requestedDate,
         manifestNumber,
+        title: clean(draft.company_name) || baseRow.title,
         time: clean(draft.requested_time),
         shipmentTransferId: clean(draft.shipment_transfer_id),
-        reference: clean(draft.project_or_work_order),
+        reference: clean(draft.project_or_work_order) || clean(draft.shipment_transfer_id),
         fromLocation,
         fromAddress: fromLocation ? addressForLocation(locations, fromLocation) : '',
         toLocation,
@@ -1856,13 +1864,13 @@ export function DeliveryClient({
       setSelectedManifestNumber(manifestNumber);
       setSelectedRow(draftRow);
       setMessage('AI intake draft loaded. Review and click Save to add this stop to the manifest.');
-    } catch {
-      setMessage('AI intake draft could not be loaded.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'AI intake draft could not be loaded.');
     } finally {
       window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
       setIntakeDraftApplied(true);
     }
-  }, [activeRows, intakeDraftApplied, locations, rows, selectedManifestDate]);
+  }, [activeRows, dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
 
   useEffect(() => {
     if (initialManifestFocusApplied || !focusedManifestNumber || !rows.length) return;
