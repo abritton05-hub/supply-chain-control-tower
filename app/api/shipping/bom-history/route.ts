@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canManageDelivery } from '@/lib/auth/roles';
+import { logTransaction } from '@/lib/transactions/log-transaction';
 
 export const runtime = 'nodejs';
 
@@ -22,8 +25,35 @@ function assertConfig() {
   if (!SUPABASE_KEY) throw new Error('Missing Supabase API key.');
 }
 
+function cleanText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function bomReference(body: Record<string, unknown>) {
+  return [body.bom_number, body.manifest_number, body.reference]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(' | ');
+}
+
+async function requireDeliveryAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canManageDelivery(profile.role)) {
+    return NextResponse.json(
+      { ok: false, message: 'Warehouse or admin access is required for shipping records.' },
+      { status: 403 }
+    );
+  }
+
+  return null;
+}
+
 export async function GET() {
   try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
     assertConfig();
 
     const res = await fetch(
@@ -52,6 +82,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
     assertConfig();
 
     const body = await request.json();
@@ -66,6 +99,29 @@ export async function POST(request: Request) {
 
     if (!res.ok) {
       return NextResponse.json({ ok: false, message: data.message || 'Save failed.' }, { status: res.status });
+    }
+
+    const row = data?.[0] ?? body;
+    const logResult = await logTransaction({
+      transaction_type: 'BOM_CREATED',
+      description: body.items || body.reference || 'BOM created',
+      quantity: null,
+      from_location: body.ship_from,
+      to_location: body.ship_to,
+      reference: bomReference(body),
+      notes: body.notes,
+      entity_type: 'shipping_bom_history',
+      entity_id: row?.id ? String(row.id) : body.bom_number,
+      details: body,
+      write_inventory_transaction: true,
+      write_activity_log: true,
+    });
+
+    if (logResult.ok === false) {
+      console.error('BOM transaction logging failed.', {
+        bomNumber: body.bom_number,
+        message: logResult.message,
+      });
     }
 
     return NextResponse.json({ ok: true, row: data?.[0] ?? null });

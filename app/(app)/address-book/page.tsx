@@ -1,4 +1,7 @@
+import { redirect } from 'next/navigation';
 import { ModulePageShell } from '@/components/module-page-shell';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canManageDelivery } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 import { AddressBookClient } from './address-book-client';
 import type { AddressBookEntry } from './types';
@@ -6,6 +9,12 @@ import type { AddressBookEntry } from './types';
 export const dynamic = 'force-dynamic';
 
 export default async function AddressBookPage() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canManageDelivery(profile.role)) {
+    redirect('/inventory');
+  }
+
   const supabase = await supabaseServer();
 
   const { data, error } = await supabase

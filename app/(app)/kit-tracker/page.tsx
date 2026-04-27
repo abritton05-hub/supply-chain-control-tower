@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { KpiCard } from '@/components/kpi-card';
 import { SectionHeader } from '@/components/section-header';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canViewInventory } from '@/lib/auth/roles';
+import { canEditInventory } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { KitLineImportPanel } from './kit-line-import-panel';
@@ -13,7 +13,7 @@ import type { KitRecord } from './types';
 export default async function KitTrackerPage() {
   const profile = await getCurrentUserProfile();
 
-  if (!canViewInventory(profile.role)) {
+  if (!canEditInventory(profile.role)) {
     redirect('/inventory');
   }
 

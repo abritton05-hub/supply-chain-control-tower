@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ScanCameraButton } from '@/components/scan-camera-button';
 import type { InventoryRecord } from './types';
 
 type Props = {
   inventory: InventoryRecord[];
+  canEditInventory: boolean;
 };
 
 type CountCapture = {
@@ -19,7 +20,12 @@ type CountCapture = {
   countedQty: number;
 };
 
-type AppRole = 'admin' | 'ops_manager' | 'warehouse' | 'viewer';
+type QuickAdjustType = 'add' | 'remove' | 'set';
+
+type QuickAdjustResponse = {
+  ok: boolean;
+  message?: string;
+};
 
 const LOCATION_TABS = ['SEA991', 'WH/A13', 'SEA99', 'SEA111', 'SEA129', 'SEA133', 'SEA143'];
 
@@ -64,12 +70,7 @@ function findExactInventory(inventory: InventoryRecord[], value: string) {
   });
 }
 
-function canEditInventory(role: AppRole) {
-  return role === 'admin' || role === 'ops_manager' || role === 'warehouse';
-}
-
-export function InventoryClient({ inventory }: Props) {
-  const [role, setRole] = useState<AppRole>('viewer');
+export function InventoryClient({ inventory, canEditInventory: canEdit }: Props) {
   const [query, setQuery] = useState('');
   const [activeSite, setActiveSite] = useState('SEA991');
   const [countItem, setCountItem] = useState<InventoryRecord | null>(null);
@@ -78,22 +79,12 @@ export function InventoryClient({ inventory }: Props) {
   const [countMessage, setCountMessage] = useState(
     'Scan an item, part number, bin, or location to start a count.'
   );
-
-  useEffect(() => {
-    async function loadRole() {
-      try {
-        const response = await fetch('/api/users/me', { cache: 'no-store' });
-        const result = await response.json();
-        if (result?.ok && result.profile?.role) {
-          setRole(result.profile.role as AppRole);
-        }
-      } catch {
-        setRole('viewer');
-      }
-    }
-
-    loadRole();
-  }, []);
+  const [quickAdjustItem, setQuickAdjustItem] = useState<InventoryRecord | null>(null);
+  const [quickAdjustType, setQuickAdjustType] = useState<QuickAdjustType>('add');
+  const [quickAdjustQty, setQuickAdjustQty] = useState('');
+  const [quickAdjustReason, setQuickAdjustReason] = useState('');
+  const [quickAdjustMessage, setQuickAdjustMessage] = useState('');
+  const [quickAdjustPending, setQuickAdjustPending] = useState(false);
 
   const inventoryOnly = useMemo(
     () => inventory.filter((item) => !(item.is_supply ?? false)),
@@ -131,8 +122,6 @@ export function InventoryClient({ inventory }: Props) {
 
     return counts;
   }, [inventoryOnly]);
-
-  const canEdit = canEditInventory(role);
 
   const handleInventoryScan = useCallback(
     (value: string) => {
@@ -179,6 +168,72 @@ export function InventoryClient({ inventory }: Props) {
     setCountItem(null);
     setCountQty(0);
     setQuery('');
+  }
+
+  function openQuickAdjust(item: InventoryRecord) {
+    setQuickAdjustItem(item);
+    setQuickAdjustType('add');
+    setQuickAdjustQty('');
+    setQuickAdjustReason('');
+    setQuickAdjustMessage('');
+  }
+
+  async function submitQuickAdjust() {
+    if (!quickAdjustItem) return;
+
+    const quantity = Number(quickAdjustQty);
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setQuickAdjustMessage('Enter a quantity greater than 0.');
+      return;
+    }
+
+    if (!quickAdjustReason.trim()) {
+      setQuickAdjustMessage('Enter a reason before adjusting inventory.');
+      return;
+    }
+
+    const currentQty = quickAdjustItem.qty_on_hand ?? 0;
+    const nextQty =
+      quickAdjustType === 'add'
+        ? currentQty + quantity
+        : quickAdjustType === 'remove'
+          ? currentQty - quantity
+          : quantity;
+
+    if (nextQty < 0) {
+      setQuickAdjustMessage('This adjustment would make inventory negative.');
+      return;
+    }
+
+    setQuickAdjustPending(true);
+    setQuickAdjustMessage('');
+
+    try {
+      const response = await fetch('/api/inventory-adjust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: quickAdjustItem.id,
+          adjustType: quickAdjustType,
+          quantity,
+          reason: quickAdjustReason.trim(),
+          notes: quickAdjustReason.trim(),
+        }),
+      });
+      const result = (await response.json()) as QuickAdjustResponse;
+
+      if (!response.ok || !result.ok) {
+        setQuickAdjustMessage(result.message || 'Inventory adjustment failed.');
+        return;
+      }
+
+      window.location.reload();
+    } catch (error) {
+      setQuickAdjustMessage(error instanceof Error ? error.message : 'Inventory adjustment failed.');
+    } finally {
+      setQuickAdjustPending(false);
+    }
   }
 
   return (
@@ -364,25 +419,13 @@ export function InventoryClient({ inventory }: Props) {
                   </div>
                 </div>
 
-                <div className="mt-4 flex gap-2">
+                <div className="mt-4">
                   <Link
-                    href={`/pull-requests?item=${encodeURIComponent(item.part_number || item.item_id)}`}
-                    className="flex-1 rounded-md bg-cyan-700 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-cyan-800"
+                    href={`/inventory/${item.item_id}`}
+                    className="erp-action-primary inline-flex w-full justify-center"
                   >
-                    Request Item
+                    Open
                   </Link>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCountItem(item);
-                      setCountQty(qtyOnHand);
-                      setCountMessage(`Ready to count ${item.part_number || item.item_id}.`);
-                    }}
-                    className="rounded-md border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Count
-                  </button>
                 </div>
               </article>
             );
@@ -411,13 +454,14 @@ export function InventoryClient({ inventory }: Props) {
                 <th className="px-4 py-3">Qty On Hand</th>
                 <th className="px-4 py-3">Reorder Point</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
 
             <tbody>
               {filteredInventory.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                     No inventory records found for {activeSite}.
                   </td>
                 </tr>
@@ -452,6 +496,13 @@ export function InventoryClient({ inventory }: Props) {
                           {status}
                         </span>
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="erp-row-actions">
+                          <Link href={`/inventory/${item.item_id}`} className="erp-action-primary">
+                            Open
+                          </Link>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })
@@ -460,6 +511,89 @@ export function InventoryClient({ inventory }: Props) {
           </table>
         </div>
       </div>
+
+      {quickAdjustItem ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-lg rounded-md border border-slate-200 bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Quick Adjust</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {quickAdjustItem.part_number || quickAdjustItem.item_id} · Current qty{' '}
+                  {quickAdjustItem.qty_on_hand ?? 0}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickAdjustItem(null)}
+                className="erp-action-secondary"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3">
+              <label className="text-sm font-semibold text-slate-700">
+                Adjustment Type
+                <select
+                  value={quickAdjustType}
+                  onChange={(event) => setQuickAdjustType(event.target.value as QuickAdjustType)}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="add">Add</option>
+                  <option value="remove">Remove</option>
+                  <option value="set">Set absolute quantity</option>
+                </select>
+              </label>
+
+              <label className="text-sm font-semibold text-slate-700">
+                Quantity
+                <input
+                  type="number"
+                  min={1}
+                  value={quickAdjustQty}
+                  onChange={(event) => setQuickAdjustQty(event.target.value)}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+
+              <label className="text-sm font-semibold text-slate-700">
+                Reason
+                <textarea
+                  value={quickAdjustReason}
+                  onChange={(event) => setQuickAdjustReason(event.target.value)}
+                  className="mt-1 min-h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Required: count correction, damage, cycle count, found stock"
+                />
+              </label>
+
+              {quickAdjustMessage ? (
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {quickAdjustMessage}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setQuickAdjustItem(null)}
+                className="erp-action-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitQuickAdjust}
+                disabled={quickAdjustPending}
+                className="erp-action-primary"
+              >
+                {quickAdjustPending ? 'Adjusting...' : 'Confirm Adjust'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

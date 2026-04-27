@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
   try {
+    const profile = await getCurrentUserProfile();
+
+    if (!profile.is_active) {
+      return NextResponse.json({ ok: false, message: 'Access denied.' }, { status: 403 });
+    }
+
     const contentType = req.headers.get('content-type') || '';
 
     if (contentType.includes('application/json')) {

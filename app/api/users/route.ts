@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canManageUsers } from '@/lib/auth/roles';
 
 export const runtime = 'nodejs';
 
@@ -37,11 +39,27 @@ function getRedirectUrl(request: Request) {
     request.headers.get('origin') ||
     'http://localhost:3000';
 
-  return `${siteUrl}/update-password`;
+  return `${siteUrl}/auth/callback?next=${encodeURIComponent('/update-password')}`;
+}
+
+async function requireUserManagementAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canManageUsers(profile.role)) {
+    return NextResponse.json(
+      { ok: false, message: 'Admin access is required to manage users.' },
+      { status: 403 }
+    );
+  }
+
+  return null;
 }
 
 export async function GET() {
   try {
+    const forbidden = await requireUserManagementAccess();
+    if (forbidden) return forbidden;
+
     const supabase = getAdminClient();
 
     const { data, error } = await supabase
@@ -70,6 +88,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const forbidden = await requireUserManagementAccess();
+    if (forbidden) return forbidden;
+
     const body = await request.json();
 
     const email = clean(body.email).toLowerCase();
@@ -146,6 +167,9 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const forbidden = await requireUserManagementAccess();
+    if (forbidden) return forbidden;
+
     const body = await request.json();
 
     const id = clean(body.id);

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
 
 export const runtime = 'nodejs';
 
@@ -73,6 +74,12 @@ function confidenceFor(workflow: SupportedWorkflow) {
 
 export async function POST(request: Request) {
   try {
+    const profile = await getCurrentUserProfile();
+
+    if (!profile.is_active) {
+      return NextResponse.json({ ok: false, message: 'Access denied.' }, { status: 403 });
+    }
+
     const body = (await request.json()) as {
       document_id?: string;
       text_hint?: string;

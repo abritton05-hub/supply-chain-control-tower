@@ -2,11 +2,20 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import type { NextRequest } from 'next/server';
 
+function safeNextPath(value: string | null) {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) {
+    return '/inventory';
+  }
+
+  return value;
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
+  const nextPath = safeNextPath(requestUrl.searchParams.get('next'));
 
-  const response = NextResponse.redirect(new URL('/inventory', request.url));
+  const response = NextResponse.redirect(new URL(nextPath, request.url));
 
   if (!code) {
     return NextResponse.redirect(new URL('/login', request.url));

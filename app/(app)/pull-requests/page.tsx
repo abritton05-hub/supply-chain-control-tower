@@ -2,14 +2,18 @@ import { unstable_noStore as noStore } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { SectionHeader } from '@/components/section-header';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canSubmitPullRequests } from '@/lib/auth/roles';
+import { canFulfillPullRequests, canSubmitPullRequests } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 import type { InventoryRecord } from '../inventory/types';
 import { PullRequestClient } from './pull-request-client';
 
 export const dynamic = 'force-dynamic';
 
-export default async function PullRequestsPage() {
+export default async function PullRequestsPage({
+  searchParams,
+}: {
+  searchParams?: { item?: string | string[] };
+}) {
   noStore();
 
   const profile = await getCurrentUserProfile();
@@ -26,6 +30,9 @@ export default async function PullRequestsPage() {
     .order('item_id', { ascending: true });
 
   const inventory = (data ?? []) as InventoryRecord[];
+  const initialItemQuery = Array.isArray(searchParams?.item)
+    ? searchParams?.item[0]
+    : searchParams?.item;
 
   return (
     <div className="space-y-4">
@@ -43,7 +50,11 @@ export default async function PullRequestsPage() {
           </p>
         </div>
       ) : (
-        <PullRequestClient inventory={inventory} />
+        <PullRequestClient
+          inventory={inventory}
+          initialItemQuery={initialItemQuery ?? ''}
+          canFulfillRequests={canFulfillPullRequests(profile.role)}
+        />
       )}
     </div>
   );

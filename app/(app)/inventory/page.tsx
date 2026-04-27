@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { KpiCard } from '@/components/kpi-card';
 import { SectionHeader } from '@/components/section-header';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canViewInventory } from '@/lib/auth/roles';
+import { canEditInventory, canViewInventory } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 import { InventoryClient } from './inventory-client';
 import type { InventoryRecord } from './types';
@@ -66,7 +66,7 @@ export default async function InventoryPage() {
           </p>
         </div>
       ) : (
-        <InventoryClient inventory={inventory} />
+        <InventoryClient inventory={inventory} canEditInventory={canEditInventory(profile.role)} />
       )}
     </div>
   );

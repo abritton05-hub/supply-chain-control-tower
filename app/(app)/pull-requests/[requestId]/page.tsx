@@ -2,9 +2,15 @@ import Link from 'next/link';
 import { unstable_noStore as noStore } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { SectionHeader } from '@/components/section-header';
+import { RelatedAlerts } from '@/components/related-alerts';
+import { StickyNotes } from '@/components/sticky-notes';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canSubmitPullRequests } from '@/lib/auth/roles';
+import { canFulfillPullRequests, canSubmitPullRequests } from '@/lib/auth/roles';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import {
+  PullRequestFulfillmentClient,
+  type FulfillmentLineView,
+} from './pull-request-fulfillment-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +22,15 @@ type PullRequestHeader = {
 type PullRequestLine = {
   id?: string | number | null;
   [key: string]: unknown;
+};
+
+type InventoryAvailabilityRow = {
+  item_id: string | null;
+  part_number: string | null;
+  qty_on_hand: number | null;
+  location: string | null;
+  site: string | null;
+  bin_location: string | null;
 };
 
 function readString(record: Record<string, unknown>, keys: string[]) {
@@ -34,21 +49,21 @@ function readString(record: Record<string, unknown>, keys: string[]) {
   return '';
 }
 
-function readQuantity(record: Record<string, unknown>, keys: string[]) {
+function readNumber(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = record[key];
 
     if (typeof value === 'number' && Number.isFinite(value)) {
-      return String(value);
+      return value;
     }
 
     if (typeof value === 'string' && value.trim()) {
       const parsed = Number(value);
-      return Number.isFinite(parsed) ? String(parsed) : value.trim();
+      if (Number.isFinite(parsed)) return parsed;
     }
   }
 
-  return '-';
+  return 0;
 }
 
 function formatDateTime(value: unknown) {
@@ -74,6 +89,16 @@ function readDateTime(record: Record<string, unknown>, keys: string[]) {
 
 function displayValue(value: string) {
   return value || '-';
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function inventoryLocation(row: InventoryAvailabilityRow | undefined, fallback: string) {
+  const location = [row?.site || row?.location, row?.bin_location].filter(Boolean).join(' / ');
+
+  return location || fallback;
 }
 
 function statusBadgeClass(status: string) {
@@ -133,27 +158,97 @@ export default async function PullRequestDetailPage({
 
   const supabase = await supabaseAdmin();
 
-  const [{ data: request, error: requestError }, { data: lineData, error: lineError }] =
-    await Promise.all([
-      supabase.from('pull_requests').select('*').eq('id', params.requestId).maybeSingle(),
-      supabase
-        .from('pull_request_lines')
+  let requestResult = isUuid(params.requestId)
+    ? await supabase.from('pull_requests').select('*').eq('id', params.requestId).maybeSingle()
+    : await supabase
+        .from('pull_requests')
         .select('*')
-        .eq('request_id', params.requestId)
-        .order('id', { ascending: true }),
-    ]);
+        .eq('request_number', params.requestId)
+        .maybeSingle();
 
-  if (requestError) {
-    throw new Error(requestError.message);
+  if (!requestResult.data && isUuid(params.requestId) && !requestResult.error) {
+    requestResult = await supabase
+      .from('pull_requests')
+      .select('*')
+      .eq('request_number', params.requestId)
+      .maybeSingle();
   }
 
-  if (!request) {
+  if (requestResult.error) {
+    throw new Error(requestResult.error.message);
+  }
+
+  if (!requestResult.data) {
     return <NotFoundPanel requestId={params.requestId} />;
   }
 
-  const header = request as PullRequestHeader;
-  const lines = lineError ? [] : ((lineData ?? []) as PullRequestLine[]);
+  const header = requestResult.data as PullRequestHeader;
   const requestNumber = readString(header, ['request_number', 'requestNumber']) || header.id;
+  let lineResult = await supabase
+    .from('pull_request_lines')
+    .select('*')
+    .eq('request_id', header.id)
+    .order('id', { ascending: true });
+
+  if (!lineResult.error && (lineResult.data ?? []).length === 0 && requestNumber !== header.id) {
+    const fallbackLineResult = await supabase
+      .from('pull_request_lines')
+      .select('*')
+      .eq('request_id', requestNumber)
+      .order('id', { ascending: true });
+
+    if (!fallbackLineResult.error && (fallbackLineResult.data ?? []).length > 0) {
+      lineResult = fallbackLineResult;
+    }
+  }
+
+  const lines = lineResult.error ? [] : ((lineResult.data ?? []) as PullRequestLine[]);
+  const itemIds = Array.from(
+    new Set(
+      lines
+        .map((line) => readString(line as Record<string, unknown>, ['item_id', 'itemId']))
+        .filter(Boolean)
+    )
+  );
+  const partNumbers = Array.from(
+    new Set(
+      lines
+        .map((line) => readString(line as Record<string, unknown>, ['part_number', 'partNumber']))
+        .filter(Boolean)
+    )
+  );
+
+  const [inventoryByItemIdResult, inventoryByPartNumberResult] = await Promise.all([
+    itemIds.length
+      ? supabase
+          .from('inventory')
+          .select('item_id,part_number,qty_on_hand,location,site,bin_location')
+          .in('item_id', itemIds)
+      : Promise.resolve({ data: [], error: null }),
+    partNumbers.length
+      ? supabase
+          .from('inventory')
+          .select('item_id,part_number,qty_on_hand,location,site,bin_location')
+          .in('part_number', partNumbers)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const inventoryByItemId = new Map<string, InventoryAvailabilityRow>();
+  const inventoryByPartNumber = new Map<string, InventoryAvailabilityRow>();
+  const inventoryRows = [
+    ...((inventoryByItemIdResult.data ?? []) as InventoryAvailabilityRow[]),
+    ...((inventoryByPartNumberResult.data ?? []) as InventoryAvailabilityRow[]),
+  ];
+
+  for (const row of inventoryRows) {
+    if (row.item_id && !inventoryByItemId.has(row.item_id)) {
+      inventoryByItemId.set(row.item_id, row);
+    }
+    if (row.part_number && !inventoryByPartNumber.has(row.part_number)) {
+      inventoryByPartNumber.set(row.part_number, row);
+    }
+  }
+
   const status = readString(header, ['status']) || 'OPEN';
   const requestedBy = readString(header, ['requested_by', 'requestedBy', 'created_by']);
   const neededBy = readDateTime(header, [
@@ -167,6 +262,50 @@ export default async function PullRequestDetailPage({
   const createdAt = readDateTime(header, ['created_at', 'createdAt']);
   const updatedAt = readDateTime(header, ['updated_at', 'updatedAt', 'modified_at']);
   const notes = readString(header, ['notes', 'request_notes', 'comments']);
+  const lineLoadError =
+    lineResult.error?.message ??
+    inventoryByItemIdResult.error?.message ??
+    inventoryByPartNumberResult.error?.message ??
+    '';
+  const fulfillmentLines: FulfillmentLineView[] = lines.map((line, index) => {
+    const record = line as Record<string, unknown>;
+    const itemId = readString(record, ['item_id', 'itemId']);
+    const partNumber = readString(record, ['part_number', 'partNumber']);
+    const inventory = inventoryByItemId.get(itemId) ?? inventoryByPartNumber.get(partNumber);
+    const requestedQty = readNumber(record, [
+      'quantity',
+      'qty',
+      'qty_requested',
+      'quantity_requested',
+      'requested_quantity',
+    ]);
+    const fulfilledQty = readNumber(record, [
+      'quantity_fulfilled',
+      'fulfilled_quantity',
+      'fulfilled_qty',
+      'qty_fulfilled',
+    ]);
+
+    return {
+      id: String(line.id ?? index),
+      itemId,
+      partNumber,
+      description: readString(record, ['description', 'item_description']),
+      requestedQty,
+      fulfilledQty,
+      remainingQty: Math.max(requestedQty - fulfilledQty, 0),
+      availableQty: Math.max(inventory?.qty_on_hand ?? 0, 0),
+      location: inventoryLocation(inventory, readString(record, ['location'])),
+      notes: readString(record, ['notes']),
+      status:
+        readString(record, ['fulfillment_status', 'status', 'line_status']) ||
+        (fulfilledQty >= requestedQty && requestedQty > 0
+          ? 'FULFILLED'
+          : fulfilledQty > 0
+            ? 'PARTIAL'
+            : 'OPEN'),
+    };
+  });
 
   return (
     <div className="space-y-4">
@@ -178,6 +317,14 @@ export default async function PullRequestDetailPage({
             Back to Pull Requests
           </Link>
         }
+      />
+
+      <StickyNotes entityType="pull_request" entityId={header.id} title="Pinned Notes" />
+
+      <RelatedAlerts
+        title="Pull Request Alerts"
+        matchValues={[header.id, requestNumber]}
+        matchTypes={['OPEN_PULL_REQUEST', 'PARTIAL_PULL_REQUEST']}
       />
 
       <div className="erp-panel p-4">
@@ -241,80 +388,12 @@ export default async function PullRequestDetailPage({
         </div>
       </div>
 
-      <div className="erp-panel overflow-hidden">
-        <div className="border-b border-slate-200 px-4 py-3">
-          <div className="text-sm font-semibold text-slate-900">Line Items</div>
-          <div className="text-xs text-slate-500">
-            {lineError
-              ? 'Line items could not be loaded.'
-              : `${lines.length} line item${lines.length === 1 ? '' : 's'}`}
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Item ID</th>
-                <th className="px-4 py-3">Part Number</th>
-                <th className="px-4 py-3">Description</th>
-                <th className="px-4 py-3">Requested</th>
-                <th className="px-4 py-3">Fulfilled</th>
-                <th className="px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                    {lineError
-                      ? 'Line items are unavailable.'
-                      : 'No line items found for this pull request.'}
-                  </td>
-                </tr>
-              ) : (
-                lines.map((line, index) => {
-                  const record = line as Record<string, unknown>;
-                  const itemId = readString(record, ['item_id', 'itemId']);
-                  const partNumber = readString(record, ['part_number', 'partNumber']);
-                  const description = readString(record, ['description', 'item_description']);
-                  const quantityRequested = readQuantity(record, [
-                    'quantity',
-                    'qty',
-                    'qty_requested',
-                    'quantity_requested',
-                    'requested_quantity',
-                  ]);
-                  const quantityFulfilled = readQuantity(record, [
-                    'quantity_fulfilled',
-                    'fulfilled_quantity',
-                    'fulfilled_qty',
-                    'qty_fulfilled',
-                  ]);
-                  const lineStatus = readString(record, [
-                    'status',
-                    'line_status',
-                    'fulfillment_status',
-                  ]);
-
-                  return (
-                    <tr key={String(line.id ?? index)} className="border-b border-slate-100 align-top">
-                      <td className="px-4 py-3 font-medium text-slate-900">
-                        {displayValue(itemId)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(partNumber)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(description)}</td>
-                      <td className="px-4 py-3 text-slate-700">{quantityRequested}</td>
-                      <td className="px-4 py-3 text-slate-700">{quantityFulfilled}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(lineStatus)}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <PullRequestFulfillmentClient
+        requestId={header.id}
+        canFulfill={canFulfillPullRequests(profile.role)}
+        lines={fulfillmentLines}
+        lineLoadError={lineLoadError}
+      />
     </div>
   );
 }

@@ -1,4 +1,11 @@
 import { NextResponse } from 'next/server';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import {
+  canManageDelivery,
+  canReceiveInventory,
+  canSubmitPullRequests,
+  type AppRole,
+} from '@/lib/auth/roles';
 
 export const runtime = 'nodejs';
 
@@ -135,8 +142,20 @@ function extractLineItems(text: string): ExtractedLineItem[] {
   return items;
 }
 
+function canUseWorkflow(role: AppRole, workflow: Workflow) {
+  if (workflow === 'pull_request') return canSubmitPullRequests(role);
+  if (workflow === 'receiving') return canReceiveInventory(role);
+  return canManageDelivery(role);
+}
+
 export async function POST(request: Request) {
   try {
+    const profile = await getCurrentUserProfile();
+
+    if (!profile.is_active) {
+      return NextResponse.json({ ok: false, message: 'Access denied.' }, { status: 403 });
+    }
+
     const body = (await request.json()) as {
       document_id?: string;
       workflow_type?: Workflow;
@@ -146,6 +165,13 @@ export async function POST(request: Request) {
     const documentId = clean(body.document_id);
     const workflow = body.workflow_type || 'delivery';
     const rawText = clean(body.raw_text);
+
+    if (!canUseWorkflow(profile.role, workflow)) {
+      return NextResponse.json(
+        { ok: false, message: 'You do not have permission to process that workflow.' },
+        { status: 403 }
+      );
+    }
 
     if (!documentId) {
       return NextResponse.json({ ok: false, message: 'document_id is required.' }, { status: 400 });

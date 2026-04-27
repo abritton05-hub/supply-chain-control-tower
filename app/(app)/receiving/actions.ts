@@ -1,9 +1,11 @@
 'use server';
 
-import { logActivity } from '@/lib/activity/log-activity';
 import { getCurrentUserEmail } from '@/lib/auth/session';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canReceiveInventory } from '@/lib/auth/roles';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { supabaseServer } from '@/lib/supabase/server';
+import { logTransaction } from '@/lib/transactions/log-transaction';
 import type { ImportPreview } from '@/lib/import-workflow/types';
 import { buildReceivingPreview, type ReceivingMatch } from './receiving-import';
 import type { ReceivingImportInput } from './types';
@@ -56,6 +58,12 @@ type ReceiptResolution = {
   isSupply: boolean;
 };
 
+type InventoryLocation = {
+  location: string | null;
+  site: string | null;
+  bin_location: string | null;
+};
+
 function clean(value: string | null | undefined) {
   return value?.trim() || '';
 }
@@ -69,6 +77,66 @@ function supplyItemId(partNumber: string, description: string) {
     .slice(0, 36);
 
   return `SUPPLY-${normalized || Date.now()}`;
+}
+
+function locationText(row: InventoryLocation | null | undefined) {
+  if (!row) return null;
+  return [clean(row.site || row.location), clean(row.bin_location)].filter(Boolean).join(' / ') || null;
+}
+
+async function requireReceivingAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canReceiveInventory(profile.role)) {
+    throw new Error('You do not have permission to receive inventory.');
+  }
+}
+
+async function ensureReceiptTransactionLocation(
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
+  transactionId: string,
+  itemId: string
+) {
+  const { data: transaction, error: transactionError } = await supabase
+    .from('inventory_transactions')
+    .select('to_location')
+    .eq('id', transactionId)
+    .maybeSingle();
+
+  if (transactionError || transaction?.to_location) {
+    return;
+  }
+
+  const { data: inventoryLocation, error: inventoryError } = await supabase
+    .from('inventory')
+    .select('location,site,bin_location')
+    .eq('item_id', itemId)
+    .maybeSingle();
+
+  if (inventoryError) {
+    console.error('Receiving transaction location lookup failed.', {
+      transactionId,
+      itemId,
+      message: inventoryError.message,
+    });
+    return;
+  }
+
+  const toLocation = locationText(inventoryLocation as InventoryLocation | null);
+  if (!toLocation) return;
+
+  const { error: updateError } = await supabase
+    .from('inventory_transactions')
+    .update({ to_location: toLocation })
+    .eq('id', transactionId);
+
+  if (updateError) {
+    console.error('Receiving transaction location update failed.', {
+      transactionId,
+      itemId,
+      message: updateError.message,
+    });
+  }
 }
 
 async function loadInventoryLookup() {
@@ -278,6 +346,8 @@ async function resolveReceiptTarget(
 
 export async function receiveInventoryItem(input: ReceiveInput) {
   try {
+    await requireReceivingAccess();
+
     const supabase = await supabaseAdmin();
     const quantity = Number(input.quantity);
     const currentUserEmail = await getCurrentUserEmail();
@@ -315,24 +385,28 @@ export async function receiveInventoryItem(input: ReceiveInput) {
       };
     }
 
-    const activity = await logActivity({
-      entityType: 'inventory_transaction',
-      entityId: String(transactionId),
-      actionType: resolved.isSupply ? 'SUPPLY_RECEIPT_POSTED' : 'RECEIPT_POSTED',
+    await ensureReceiptTransactionLocation(supabase, String(transactionId), resolved.itemId);
+
+    const activity = await logTransaction({
+      transaction_type: 'RECEIPT',
+      item_id: resolved.itemId,
+      part_number: resolved.partNumber || null,
+      description: resolved.description || null,
+      quantity,
+      reference: clean(input.reference) || null,
+      notes: clean(input.notes) || null,
+      performed_by: performedBy,
+      entity_type: 'inventory_transaction',
+      entity_id: String(transactionId),
       title: `${resolved.isSupply ? 'Supply receipt' : 'Receipt'} posted for ${
         resolved.partNumber || resolved.itemId
       }`,
       details: {
-        item_id: resolved.itemId,
-        part_number: resolved.partNumber || null,
-        description: resolved.description || null,
-        quantity,
-        reference: clean(input.reference) || null,
-        notes: clean(input.notes) || null,
         is_supply: resolved.isSupply,
       },
-      referenceNumber: clean(input.reference) || resolved.itemId || null,
-      userName: performedBy,
+      write_inventory_transaction: false,
+      write_activity_log: true,
+      supabase,
     });
 
     if (!activity.ok) {
@@ -360,6 +434,8 @@ export async function previewReceivingImport(
   rows: ReceivingImportInput[]
 ): Promise<PreviewResult> {
   try {
+    await requireReceivingAccess();
+
     if (!rows.length) {
       return {
         ok: false,
@@ -392,6 +468,8 @@ export async function importReceivingReceipts(
   rows: ReceivingImportInput[]
 ): Promise<BulkImportResult> {
   try {
+    await requireReceivingAccess();
+
     if (!rows.length) {
       return {
         ok: false,

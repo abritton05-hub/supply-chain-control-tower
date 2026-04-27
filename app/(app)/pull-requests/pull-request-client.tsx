@@ -9,6 +9,8 @@ import { supabaseBrowser } from '@/lib/supabase/client';
 
 type PullRequestClientProps = {
   inventory: InventoryRecord[];
+  initialItemQuery?: string;
+  canFulfillRequests: boolean;
 };
 
 type RequestLine = {
@@ -27,6 +29,8 @@ type SavedPullRequestLine = {
   part_number: string | null;
   description: string | null;
   quantity: number | null;
+  quantity_fulfilled?: number | null;
+  fulfillment_status?: string | null;
   location: string | null;
   notes: string | null;
 };
@@ -43,6 +47,11 @@ type SavedPullRequest = {
 type PullRequestApiResponse = {
   ok: boolean;
   requests?: SavedPullRequest[];
+  message?: string;
+};
+
+type ClosePullRequestResponse = {
+  ok: boolean;
   message?: string;
 };
 
@@ -74,7 +83,62 @@ function formatDateTime(value: string | null) {
   return new Date(value).toLocaleString();
 }
 
-export function PullRequestClient({ inventory }: PullRequestClientProps) {
+function statusBadgeClass(status: string) {
+  const normalized = status.toLowerCase();
+
+  if (normalized.includes('closed') || normalized.includes('complete') || normalized.includes('fulfilled')) {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  }
+
+  if (normalized.includes('partial')) return 'border-amber-200 bg-amber-50 text-amber-700';
+  if (normalized.includes('cancel') || normalized.includes('reject')) return 'border-rose-200 bg-rose-50 text-rose-700';
+
+  return 'border-cyan-200 bg-cyan-50 text-cyan-700';
+}
+
+function lineRequestedQty(line: SavedPullRequestLine) {
+  return Number(line.quantity) || 0;
+}
+
+function lineFulfilledQty(line: SavedPullRequestLine) {
+  return Number(line.quantity_fulfilled) || 0;
+}
+
+function lineRemainingQty(line: SavedPullRequestLine) {
+  return Math.max(lineRequestedQty(line) - lineFulfilledQty(line), 0);
+}
+
+function requestFulfillmentSummary(request: SavedPullRequest) {
+  const lines = request.pull_request_lines ?? [];
+  const requested = lines.reduce((sum, line) => sum + lineRequestedQty(line), 0);
+  const fulfilled = lines.reduce((sum, line) => sum + lineFulfilledQty(line), 0);
+
+  return { requested, fulfilled, remaining: Math.max(requested - fulfilled, 0) };
+}
+
+function normalizedRequestStatus(request: SavedPullRequest) {
+  const rawStatus = (request.status || 'OPEN').toUpperCase();
+  const { requested, fulfilled, remaining } = requestFulfillmentSummary(request);
+
+  if (rawStatus === 'CLOSED' || rawStatus === 'COMPLETED') return rawStatus;
+  if (requested > 0 && remaining === 0) return 'FULFILLED';
+  if (fulfilled > 0) return 'PARTIAL';
+
+  return rawStatus;
+}
+
+function canCloseRequest(request: SavedPullRequest) {
+  const status = normalizedRequestStatus(request);
+  const { requested, remaining } = requestFulfillmentSummary(request);
+
+  return status !== 'CLOSED' && requested > 0 && remaining === 0;
+}
+
+export function PullRequestClient({
+  inventory,
+  initialItemQuery = '',
+  canFulfillRequests,
+}: PullRequestClientProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('request');
   const [requestedBy, setRequestedBy] = useState('');
   const [search, setSearch] = useState('');
@@ -92,6 +156,25 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
   const [requestorFilter, setRequestorFilter] = useState('ALL');
   const [partFilter, setPartFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [actionMessage, setActionMessage] = useState('');
+  const [closingRequestId, setClosingRequestId] = useState('');
+
+  useEffect(() => {
+    const query = initialItemQuery.trim();
+    if (!query) return;
+
+    const exactMatch = inventory.find((item) => exactItem(item, query));
+    setActiveTab('request');
+
+    if (exactMatch) {
+      setSelectedItemId(exactMatch.id);
+      setSearch(`${exactMatch.part_number || exactMatch.item_id} ${exactMatch.description}`.trim());
+      setMessage(`Matched ${exactMatch.part_number || exactMatch.item_id}.`);
+      return;
+    }
+
+    setSearch(query);
+  }, [initialItemQuery, inventory]);
 
   useEffect(() => {
     const supabase = supabaseBrowser();
@@ -235,7 +318,7 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
             .includes(partFilter.trim().toLowerCase())
         );
 
-      const mainText = `${request.request_number || ''} ${request.requested_by || ''} ${request.status || ''} ${lineText}`.toLowerCase();
+      const mainText = `${request.request_number || ''} ${request.requested_by || ''} ${request.status || ''} ${normalizedRequestStatus(request)} ${lineText}`.toLowerCase();
 
       const searchMatch =
         !requestSearch.trim() || mainText.includes(requestSearch.trim().toLowerCase());
@@ -243,8 +326,7 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
       const requestorMatch =
         requestorFilter === 'ALL' || (request.requested_by || '') === requestorFilter;
 
-      const statusMatch =
-        statusFilter === 'ALL' || (request.status || 'OPEN').toUpperCase() === statusFilter;
+      const statusMatch = statusFilter === 'ALL' || normalizedRequestStatus(request) === statusFilter;
 
       return searchMatch && requestorMatch && statusMatch && linePartMatch;
     });
@@ -352,6 +434,47 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
       setMessage(err instanceof Error ? err.message : 'Failed to submit pull request.');
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function closeRequest(request: SavedPullRequest) {
+    if (!canFulfillRequests) {
+      setActionMessage('Warehouse or admin access is required to close pull requests.');
+      return;
+    }
+
+    if (!canCloseRequest(request)) {
+      setActionMessage('Only fully fulfilled pull requests can be closed from the log.');
+      return;
+    }
+
+    const requestLabel = request.request_number || request.id;
+    if (!window.confirm(`Close pull request ${requestLabel}? This keeps fulfillment history intact.`)) {
+      return;
+    }
+
+    setClosingRequestId(request.id);
+    setActionMessage('');
+
+    try {
+      const response = await fetch(`/api/pull-requests/${encodeURIComponent(request.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CLOSED' }),
+      });
+      const result = (await response.json()) as ClosePullRequestResponse;
+
+      if (!response.ok || !result.ok) {
+        setActionMessage(result.message || 'Pull request could not be closed.');
+        return;
+      }
+
+      setActionMessage(result.message || 'Pull request closed.');
+      await loadSavedRequests();
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : 'Pull request could not be closed.');
+    } finally {
+      setClosingRequestId('');
     }
   }
 
@@ -638,10 +761,18 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
               >
                 <option value="ALL">All Statuses</option>
                 <option value="OPEN">Open</option>
-                <option value="COMPLETED">Completed</option>
+                <option value="PARTIAL">Partial</option>
+                <option value="FULFILLED">Fulfilled</option>
+                <option value="CLOSED">Closed</option>
               </select>
             </div>
           </div>
+
+          {actionMessage ? (
+            <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+              {actionMessage}
+            </div>
+          ) : null}
 
           <div className="mt-4">
             {savedRequestsLoading ? (
@@ -658,7 +789,12 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
               </div>
             ) : (
               <div className="space-y-3">
-                {filteredSavedRequests.map((request) => (
+                {filteredSavedRequests.map((request) => {
+                  const status = normalizedRequestStatus(request);
+                  const summary = requestFulfillmentSummary(request);
+                  const closeAllowed = canFulfillRequests && canCloseRequest(request);
+
+                  return (
                   <div key={request.id} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div>
@@ -676,14 +812,42 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
-                          {request.status || 'OPEN'}
+                      <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+                        <span className={`rounded-md border px-3 py-2 text-xs font-semibold uppercase ${statusBadgeClass(status)}`}>
+                          {status}
                         </span>
                         <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
                           {(request.pull_request_lines ?? []).length} line
                           {(request.pull_request_lines ?? []).length === 1 ? '' : 's'}
                         </span>
+                        <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
+                          {summary.fulfilled}/{summary.requested || 0} fulfilled
+                        </span>
+                        <div className="erp-row-actions w-full lg:w-auto">
+                          <Link href={`/pull-requests/${request.id}`} className="erp-action-primary">
+                            Open
+                          </Link>
+                          {canFulfillRequests ? (
+                            <>
+                              <Link href={`/pull-requests/${request.id}`} className="erp-action-secondary">
+                                Fulfill
+                              </Link>
+                              <button
+                                type="button"
+                                onClick={() => closeRequest(request)}
+                                disabled={!closeAllowed || closingRequestId === request.id}
+                                className="erp-action-danger"
+                                title={
+                                  closeAllowed
+                                    ? 'Close this fulfilled pull request'
+                                    : 'Close is available after all lines are fulfilled'
+                                }
+                              >
+                                {closingRequestId === request.id ? 'Closing...' : 'Close'}
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
@@ -695,26 +859,50 @@ export function PullRequestClient({ inventory }: PullRequestClientProps) {
                             <th className="px-3 py-2">Part Number</th>
                             <th className="px-3 py-2">Description</th>
                             <th className="px-3 py-2">Qty</th>
+                            <th className="px-3 py-2">Fulfilled</th>
+                            <th className="px-3 py-2">Remaining</th>
+                            <th className="px-3 py-2">Status</th>
                             <th className="px-3 py-2">Location</th>
                             <th className="px-3 py-2">Notes</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {(request.pull_request_lines ?? []).map((line) => (
-                            <tr key={line.id} className="border-t border-slate-100">
-                              <td className="px-3 py-2">{line.item_id || '-'}</td>
-                              <td className="px-3 py-2">{line.part_number || '-'}</td>
-                              <td className="px-3 py-2">{line.description || '-'}</td>
-                              <td className="px-3 py-2">{line.quantity ?? '-'}</td>
-                              <td className="px-3 py-2">{line.location || '-'}</td>
-                              <td className="px-3 py-2">{line.notes || '-'}</td>
-                            </tr>
-                          ))}
+                          {(request.pull_request_lines ?? []).map((line) => {
+                            const requested = lineRequestedQty(line);
+                            const fulfilled = lineFulfilledQty(line);
+                            const remaining = lineRemainingQty(line);
+                            const lineStatus =
+                              line.fulfillment_status ||
+                              (remaining <= 0 && requested > 0
+                                ? 'FULFILLED'
+                                : fulfilled > 0
+                                  ? 'PARTIAL'
+                                  : 'OPEN');
+
+                            return (
+                              <tr key={line.id} className="border-t border-slate-100">
+                                <td className="px-3 py-2">{line.item_id || '-'}</td>
+                                <td className="px-3 py-2">{line.part_number || '-'}</td>
+                                <td className="px-3 py-2">{line.description || '-'}</td>
+                                <td className="px-3 py-2">{requested || '-'}</td>
+                                <td className="px-3 py-2">{fulfilled}</td>
+                                <td className="px-3 py-2">{remaining}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold uppercase ${statusBadgeClass(lineStatus)}`}>
+                                    {lineStatus}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2">{line.location || '-'}</td>
+                                <td className="px-3 py-2">{line.notes || '-'}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

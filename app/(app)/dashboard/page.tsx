@@ -1,5 +1,8 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { SectionHeader } from '@/components/section-header';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canViewOperationsDashboard } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -66,6 +69,12 @@ function locationText(code: string | null, address: string | null) {
 }
 
 export default async function DashboardPage() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canViewOperationsDashboard(profile.role)) {
+    redirect('/inventory');
+  }
+
   const supabase = await supabaseServer();
 
   const [shippingResult, inventoryResult] = await Promise.all([

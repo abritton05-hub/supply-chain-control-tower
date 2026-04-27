@@ -6,6 +6,7 @@ function isProtectedPath(pathname: string) {
   if (pathname.startsWith('/api')) return false;
   if (pathname.startsWith('/favicon')) return false;
   if (pathname === '/login') return false;
+  if (pathname === '/auth/callback') return false;
 
   return true;
 }

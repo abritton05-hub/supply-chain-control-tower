@@ -5,6 +5,10 @@ import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { RECEIVING_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
 import type { ReceivingDraftPayload } from '@/lib/ai/intake/types';
+import {
+  buildReceivingLabelPayload,
+  downloadLabelPayloadsCsv,
+} from '@/lib/labels/p-touch';
 import { receiveInventoryItem } from './actions';
 import type {
   InventoryOption,
@@ -16,6 +20,7 @@ import type {
 type Props = {
   inventory: InventoryOption[];
   recentReceipts: InventoryTransaction[];
+  initialItemQuery?: string;
 };
 
 type MeProfile = {
@@ -37,7 +42,18 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
 }
 
-export function ReceivingClient({ inventory, recentReceipts }: Props) {
+function labelFileSeed(row: InventoryTransaction) {
+  return `receiving-label-${row.item_id || row.part_number || row.id}`;
+}
+
+function matchesInventoryItem(item: InventoryOption, value: string) {
+  const needle = value.trim().toLowerCase();
+  if (!needle) return false;
+
+  return item.item_id.toLowerCase() === needle || item.part_number?.toLowerCase() === needle;
+}
+
+export function ReceivingClient({ inventory, recentReceipts, initialItemQuery = '' }: Props) {
   const router = useRouter();
 
   const [form, setForm] = useState<ReceiveInventoryInput>(EMPTY_FORM);
@@ -67,6 +83,28 @@ export function ReceivingClient({ inventory, recentReceipts }: Props) {
 
     loadMe();
   }, []);
+
+  useEffect(() => {
+    const value = initialItemQuery.trim();
+    if (!value) return;
+
+    const matchedItem = inventory.find((item) => matchesInventoryItem(item, value));
+    setSearch(value);
+
+    if (matchedItem) {
+      setForm((prev) => ({
+        ...prev,
+        item_id: matchedItem.item_id,
+        part_number: matchedItem.part_number ?? '',
+        description: matchedItem.description ?? '',
+      }));
+      setSearch(`${matchedItem.item_id} ${matchedItem.part_number ?? ''}`.trim());
+      setMessage({
+        ok: true,
+        message: 'Inventory item prefilled. Confirm quantity before posting.',
+      });
+    }
+  }, [initialItemQuery, inventory]);
 
   useEffect(() => {
     const rawDraft = window.localStorage.getItem(RECEIVING_DRAFT_STORAGE_KEY);
@@ -193,6 +231,24 @@ export function ReceivingClient({ inventory, recentReceipts }: Props) {
         setSearch('');
         router.refresh();
       }
+    });
+  }
+
+  function exportReceiptLabel(row: InventoryTransaction) {
+    const payload = buildReceivingLabelPayload({
+      itemId: row.item_id,
+      partNumber: row.part_number,
+      description: row.description,
+      quantity: row.quantity,
+      location: row.to_location,
+      reference: row.reference,
+      date: row.transaction_date || row.created_at,
+    });
+
+    downloadLabelPayloadsCsv([payload], labelFileSeed(row));
+    setMessage({
+      ok: true,
+      message: 'Label data exported for P-touch Editor import.',
     });
   }
 
@@ -456,13 +512,14 @@ export function ReceivingClient({ inventory, recentReceipts }: Props) {
                 <th className="px-4 py-3">Reference</th>
                 <th className="px-4 py-3">Received By</th>
                 <th className="px-4 py-3">Notes</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
 
             <tbody>
               {recentReceipts.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                     No receipt transactions found.
                   </td>
                 </tr>
@@ -471,9 +528,13 @@ export function ReceivingClient({ inventory, recentReceipts }: Props) {
                   <tr key={row.id} className="border-b border-slate-100 align-top">
                     <td className="px-4 py-3 text-slate-700">{formatDateTime(row.created_at)}</td>
                     <td className="px-4 py-3 font-medium text-slate-900">
-                      <Link href={`/inventory/${row.item_id}`} className="text-cyan-700 hover:underline">
-                        {row.item_id}
-                      </Link>
+                      {row.item_id ? (
+                        <Link href={`/inventory/${row.item_id}`} className="text-cyan-700 hover:underline">
+                          {row.item_id}
+                        </Link>
+                      ) : (
+                        '-'
+                      )}
                     </td>
                     <td className="px-4 py-3 text-slate-700">{row.part_number || '-'}</td>
                     <td className="px-4 py-3 text-slate-700">{row.description || '-'}</td>
@@ -482,6 +543,28 @@ export function ReceivingClient({ inventory, recentReceipts }: Props) {
                     <td className="px-4 py-3 text-slate-700">{row.reference || '-'}</td>
                     <td className="px-4 py-3 text-slate-700">{row.performed_by || '-'}</td>
                     <td className="px-4 py-3 text-slate-700">{row.notes || '-'}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="erp-row-actions">
+                        <button
+                          type="button"
+                          onClick={() => exportReceiptLabel(row)}
+                          className="erp-action-primary"
+                        >
+                          Export P-touch Label Data
+                        </button>
+                        {row.item_id ? (
+                          <Link href={`/inventory/${row.item_id}`} className="erp-action-secondary">
+                            View Inventory Item
+                          </Link>
+                        ) : null}
+                        <Link
+                          href={`/transactions?type=RECEIPT#transaction-${row.id}`}
+                          className="erp-action-secondary"
+                        >
+                          View Transaction
+                        </Link>
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}

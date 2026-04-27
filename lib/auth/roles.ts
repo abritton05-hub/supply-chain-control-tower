@@ -25,6 +25,10 @@ export function canManageUsers(role: AppRole | null | undefined) {
   return role === 'admin';
 }
 
+export function canViewOperationsDashboard(role: AppRole | null | undefined) {
+  return role === 'warehouse' || role === 'admin';
+}
+
 export function canViewInventory(role: AppRole | null | undefined) {
   return role === 'tech' || role === 'warehouse' || role === 'admin';
 }
@@ -42,6 +46,14 @@ export function canUseWarehouse(role: AppRole | null | undefined) {
 }
 
 export function canReceiveInventory(role: AppRole | null | undefined) {
+  return role === 'warehouse' || role === 'admin';
+}
+
+export function canFulfillPullRequests(role: AppRole | null | undefined) {
+  return role === 'warehouse' || role === 'admin';
+}
+
+export function canManageDelivery(role: AppRole | null | undefined) {
   return role === 'warehouse' || role === 'admin';
 }
 

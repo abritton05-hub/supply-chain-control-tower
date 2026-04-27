@@ -1,4 +1,11 @@
 import { NextResponse } from 'next/server';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import {
+  canManageDelivery,
+  canReceiveInventory,
+  canSubmitPullRequests,
+  type AppRole,
+} from '@/lib/auth/roles';
 
 export const runtime = 'nodejs';
 
@@ -52,8 +59,20 @@ function formatLineItems(lineItems: any[]) {
     .join('\n');
 }
 
+function canUseWorkflow(role: AppRole, workflow: Workflow) {
+  if (workflow === 'pull_request') return canSubmitPullRequests(role);
+  if (workflow === 'receiving') return canReceiveInventory(role);
+  return canManageDelivery(role);
+}
+
 export async function POST(request: Request) {
   try {
+    const profile = await getCurrentUserProfile();
+
+    if (!profile.is_active) {
+      return NextResponse.json({ ok: false, message: 'Access denied.' }, { status: 403 });
+    }
+
     const body = (await request.json()) as ApplyBody;
 
     if (!body.document_id) {
@@ -64,6 +83,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { ok: false, message: 'selected_workflow_type is required.' },
         { status: 400 }
+      );
+    }
+
+    if (!canUseWorkflow(profile.role, body.selected_workflow_type)) {
+      return NextResponse.json(
+        { ok: false, message: 'You do not have permission to create that workflow draft.' },
+        { status: 403 }
       );
     }
 

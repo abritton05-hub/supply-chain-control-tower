@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canManageDelivery } from '@/lib/auth/roles';
 
 export const runtime = 'nodejs';
 
@@ -70,8 +72,24 @@ function parseAddress(address: string) {
   };
 }
 
+async function requireDeliveryAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canManageDelivery(profile.role)) {
+    return NextResponse.json(
+      { ok: false, message: 'Warehouse or admin access is required for shipping locations.' },
+      { status: 403 }
+    );
+  }
+
+  return null;
+}
+
 export async function GET() {
   try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
     assertConfig();
 
     const res = await fetch(
@@ -109,6 +127,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
     assertConfig();
 
     const body = await request.json();

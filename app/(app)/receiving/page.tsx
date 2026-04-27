@@ -1,11 +1,24 @@
+import { redirect } from 'next/navigation';
 import { SectionHeader } from '@/components/section-header';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canReceiveInventory } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 import { ReceivingClient } from './receiving-client';
 import type { InventoryOption, InventoryTransaction } from './types';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ReceivingPage() {
+export default async function ReceivingPage({
+  searchParams,
+}: {
+  searchParams?: { item?: string | string[] };
+}) {
+  const profile = await getCurrentUserProfile();
+
+  if (!canReceiveInventory(profile.role)) {
+    redirect('/inventory');
+  }
+
   const supabase = await supabaseServer();
 
   const { data: inventoryData, error: inventoryError } = await supabase
@@ -24,6 +37,9 @@ export default async function ReceivingPage() {
 
   const inventory = (inventoryData ?? []) as InventoryOption[];
   const receipts = (receiptData ?? []) as InventoryTransaction[];
+  const initialItemQuery = Array.isArray(searchParams?.item)
+    ? searchParams?.item[0]
+    : searchParams?.item;
 
   const setupError = inventoryError?.message ?? receiptError?.message ?? '';
 
@@ -43,7 +59,11 @@ export default async function ReceivingPage() {
           </p>
         </div>
       ) : (
-        <ReceivingClient inventory={inventory} recentReceipts={receipts} />
+        <ReceivingClient
+          inventory={inventory}
+          recentReceipts={receipts}
+          initialItemQuery={initialItemQuery ?? ''}
+        />
       )}
     </div>
   );

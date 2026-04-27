@@ -1,6 +1,8 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canManageDelivery } from '@/lib/auth/roles';
 import { getCurrentUserEmail } from '@/lib/auth/session';
 import { supabaseServer } from '@/lib/supabase/server';
 import type { AddressBookFormInput } from './types';
@@ -39,8 +41,18 @@ function validateAddressInput(input: AddressBookFormInput): string | null {
   return null;
 }
 
+async function requireAddressBookAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canManageDelivery(profile.role)) {
+    throw new Error('Warehouse or admin access is required to manage shipping addresses.');
+  }
+}
+
 export async function saveAddressBookEntry(input: AddressBookFormInput): Promise<ActionResult> {
   try {
+    await requireAddressBookAccess();
+
     const validationError = validateAddressInput(input);
 
     if (validationError) {
@@ -120,6 +132,8 @@ export async function saveAddressBookEntry(input: AddressBookFormInput): Promise
 
 export async function deactivateAddressBookEntry(id: string): Promise<ActionResult> {
   try {
+    await requireAddressBookAccess();
+
     const cleanId = clean(id);
 
     if (!cleanId) {
@@ -160,6 +174,8 @@ export async function deactivateAddressBookEntry(id: string): Promise<ActionResu
 
 export async function reactivateAddressBookEntry(id: string): Promise<ActionResult> {
   try {
+    await requireAddressBookAccess();
+
     const cleanId = clean(id);
 
     if (!cleanId) {

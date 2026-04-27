@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { ModulePageShell } from '@/components/module-page-shell';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canViewTransactions } from '@/lib/auth/roles';
+import { canManageDelivery } from '@/lib/auth/roles';
 import { supabaseRest } from '@/lib/supabase/rest';
 import { DeliveryClient } from './delivery-client';
 import type {
@@ -152,7 +152,7 @@ export default async function DeliveryPage({
 }) {
   const profile = await getCurrentUserProfile();
 
-  if (!canViewTransactions(profile.role)) {
+  if (!canManageDelivery(profile.role)) {
     redirect('/inventory');
   }
 
@@ -164,7 +164,7 @@ export default async function DeliveryPage({
       title="Shipping"
       subtitle="BOM releases, manifests, pickups, deliveries, and saved movement history"
     >
-      <DeliveryClient {...data} />
+      <DeliveryClient {...data} canManageDelivery={canManageDelivery(profile.role)} />
     </ModulePageShell>
   );
 }

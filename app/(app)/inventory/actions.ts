@@ -2,8 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canReceiveInventory } from '@/lib/auth/roles';
+import { canEditInventory } from '@/lib/auth/roles';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { logTransaction } from '@/lib/transactions/log-transaction';
 import type { ImportActionResult } from '@/lib/import-workflow/types';
 import {
   buildInventoryPreview,
@@ -83,7 +84,7 @@ function databaseErrorMessage(context: string, error: SupabaseActionError) {
 async function requireInventoryWriteAccess() {
   const profile = await getCurrentUserProfile();
 
-  if (!canReceiveInventory(profile.role)) {
+  if (!canEditInventory(profile.role)) {
     throw new Error('You do not have permission to modify inventory.');
   }
 }
@@ -130,6 +131,44 @@ function revalidateInventoryPaths(itemIds: Iterable<string>) {
     if (cleanItemId) {
       revalidatePath(`/inventory/${cleanItemId}`);
     }
+  }
+}
+
+function inventoryPlace(site: string | null | undefined, binLocation: string | null | undefined) {
+  return [cleanInventoryText(site), cleanInventoryText(binLocation)].filter(Boolean).join(' / ') || null;
+}
+
+async function logInventoryAudit(
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
+  input: {
+    transaction_type: 'INVENTORY_CREATED' | 'INVENTORY_UPDATED' | 'INVENTORY_ADJUSTMENT';
+    item_id: string;
+    part_number: string | null;
+    description: string | null;
+    quantity?: number | null;
+    from_location?: string | null;
+    to_location?: string | null;
+    reference?: string | null;
+    notes?: string | null;
+    details?: Record<string, unknown>;
+  }
+) {
+  const result = await logTransaction({
+    ...input,
+    entity_type: 'inventory',
+    entity_id: input.item_id,
+    title: `${input.transaction_type.replace(/_/g, ' ')} ${input.part_number || input.item_id}`,
+    write_inventory_transaction: true,
+    write_activity_log: true,
+    supabase,
+  });
+
+  if (result.ok === false) {
+    console.error('Inventory transaction logging failed.', {
+      itemId: input.item_id,
+      transactionType: input.transaction_type,
+      message: result.message,
+    });
   }
 }
 
@@ -326,17 +365,32 @@ export async function createInventoryItem(
       }
     }
 
+    const payload = buildInventoryPayloadWithSupply(normalized);
+
     const { data: insertedRecord, error } = await supabase
       .from('inventory')
-      .insert(buildInventoryPayloadWithSupply(normalized))
-      .select('item_id')
+      .insert(payload)
+      .select('item_id,part_number,description,site,bin_location,qty_on_hand')
       .maybeSingle();
 
     if (error) {
       return { ok: false, message: databaseErrorMessage('Adding inventory item', error) };
     }
 
-    revalidateInventoryPaths([insertedRecord?.item_id ?? itemId]);
+    const loggedRecord = insertedRecord ?? payload;
+    await logInventoryAudit(supabase, {
+      transaction_type: 'INVENTORY_CREATED',
+      item_id: loggedRecord.item_id ?? itemId,
+      part_number: loggedRecord.part_number ?? payload.part_number,
+      description: loggedRecord.description ?? payload.description,
+      quantity: loggedRecord.qty_on_hand ?? payload.qty_on_hand,
+      to_location: inventoryPlace(loggedRecord.site ?? payload.site, loggedRecord.bin_location ?? payload.bin_location),
+      reference: loggedRecord.item_id ?? itemId,
+      notes: 'Inventory item created.',
+      details: payload,
+    });
+
+    revalidateInventoryPaths([loggedRecord.item_id ?? itemId]);
 
     return { ok: true, message: 'Inventory item added.' };
   } catch (error) {
@@ -430,11 +484,13 @@ export async function updateInventoryItem(
       }
     }
 
+    const payload = buildInventoryPayloadWithSupply(normalized);
+
     const { data: updatedRecord, error } = await supabase
       .from('inventory')
-      .update(buildInventoryPayloadWithSupply(normalized))
+      .update(payload)
       .eq('id', input.id)
-      .select('id,item_id')
+      .select('id,item_id,part_number,description,site,bin_location,qty_on_hand')
       .maybeSingle();
 
     if (error) {
@@ -445,7 +501,30 @@ export async function updateInventoryItem(
       return { ok: false, message: 'Inventory record was not updated. Refresh and try again.' };
     }
 
-    revalidateInventoryPaths([(currentRecord as ExistingInventoryMatch).item_id, updatedRecord.item_id]);
+    const current = currentRecord as ExistingInventoryMatch;
+    const previousQty = current.qty_on_hand ?? 0;
+    const nextQty = updatedRecord.qty_on_hand ?? payload.qty_on_hand ?? 0;
+    const quantityChanged = previousQty !== nextQty;
+
+    await logInventoryAudit(supabase, {
+      transaction_type: 'INVENTORY_UPDATED',
+      item_id: updatedRecord.item_id,
+      part_number: updatedRecord.part_number ?? payload.part_number,
+      description: updatedRecord.description ?? payload.description,
+      quantity: quantityChanged ? nextQty - previousQty : null,
+      from_location: inventoryPlace(current.site || current.location, current.bin_location),
+      to_location: inventoryPlace(updatedRecord.site ?? payload.site, updatedRecord.bin_location ?? payload.bin_location),
+      reference: updatedRecord.item_id,
+      notes: quantityChanged
+        ? `Inventory quantity changed from ${previousQty} to ${nextQty}.`
+        : 'Inventory item updated.',
+      details: {
+        before: current,
+        after: payload,
+      },
+    });
+
+    revalidateInventoryPaths([current.item_id, updatedRecord.item_id]);
 
     return { ok: true, message: 'Inventory item updated.' };
   } catch (error) {
@@ -510,6 +589,25 @@ export async function importInventoryItems(
           saved += 1;
           affectedItemIds.add(existing.item_id);
           affectedItemIds.add(payload.item_id);
+          await logInventoryAudit(supabase, {
+            transaction_type: 'INVENTORY_UPDATED',
+            item_id: payload.item_id,
+            part_number: payload.part_number,
+            description: payload.description,
+            quantity:
+              (existing.qty_on_hand ?? 0) !== (payload.qty_on_hand ?? 0)
+                ? (payload.qty_on_hand ?? 0) - (existing.qty_on_hand ?? 0)
+                : null,
+            from_location: inventoryPlace(existing.site || existing.location, existing.bin_location),
+            to_location: inventoryPlace(payload.site, payload.bin_location),
+            reference: payload.item_id,
+            notes: `Inventory import updated row ${rowNumber}.`,
+            details: {
+              before: existing,
+              after: payload,
+              source_row_number: rowNumber,
+            },
+          });
 
           const updatedMatch: ExistingInventoryMatch = {
             id: existing.id,
@@ -550,6 +648,20 @@ export async function importInventoryItems(
 
           const inserted = data as ExistingInventoryMatch;
           affectedItemIds.add(inserted.item_id);
+          await logInventoryAudit(supabase, {
+            transaction_type: 'INVENTORY_CREATED',
+            item_id: inserted.item_id,
+            part_number: inserted.part_number,
+            description: inserted.description,
+            quantity: inserted.qty_on_hand,
+            to_location: inventoryPlace(inserted.site || inserted.location, inserted.bin_location),
+            reference: inserted.item_id,
+            notes: `Inventory import created row ${rowNumber}.`,
+            details: {
+              after: inserted,
+              source_row_number: rowNumber,
+            },
+          });
           if (inserted.item_id) {
             maps.byItemId.set(inserted.item_id, inserted);
           }

@@ -44,11 +44,11 @@ export type ReceivingImportInput = Omit<ReceiveInventoryInput, 'quantity'> & {
 export type InventoryTransaction = {
   id: string;
   transaction_date?: string | null;
-  item_id: string;
+  item_id: string | null;
   part_number: string | null;
   description: string | null;
   transaction_type: string;
-  quantity: number;
+  quantity: number | null;
   from_location: string | null;
   to_location: string | null;
   reference: string | null;

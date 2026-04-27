@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { canSubmitPullRequests } from '@/lib/auth/roles';
 import { getCurrentUserEmail } from '@/lib/auth/session';
-import { logActivity } from '@/lib/activity/log-activity';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { logTransaction } from '@/lib/transactions/log-transaction';
 
 type PullRequestLineInput = {
   item_id?: string;
@@ -12,6 +12,17 @@ type PullRequestLineInput = {
   location?: string;
   quantity?: number;
   notes?: string;
+};
+
+type SavedPullRequestLine = {
+  id: string;
+  request_id: string;
+  item_id: string | null;
+  part_number: string | null;
+  description: string | null;
+  quantity: number | null;
+  location: string | null;
+  notes: string | null;
 };
 
 type PullRequestInput = {
@@ -39,6 +50,10 @@ function normalizeLine(line: PullRequestLineInput) {
     quantity: Number(line.quantity) || 0,
     notes: clean(line.notes) || null,
   };
+}
+
+function pullRequestReference(requestNumber: string | null | undefined, line: { part_number?: string | null; item_id?: string | null }) {
+  return [requestNumber, line.part_number || line.item_id].filter(Boolean).join(' | ');
 }
 
 async function createPullRequestNotification(
@@ -107,6 +122,18 @@ function missingColumnFromError(error: NotificationError) {
   return detailsColumn || '';
 }
 
+function isMissingFulfillmentColumns(error: NotificationError) {
+  const message = [error.message, error.details, error.code].filter(Boolean).join(' ').toLowerCase();
+
+  return (
+    message.includes('quantity_fulfilled') ||
+    message.includes('fulfillment_status') ||
+    message.includes('resolved_by') ||
+    message.includes('fulfilled_by') ||
+    message.includes('pgrst204')
+  );
+}
+
 export async function GET() {
   try {
     const profile = await getCurrentUserProfile();
@@ -123,7 +150,7 @@ export async function GET() {
 
     const supabase = await supabaseAdmin();
 
-    const { data, error } = await supabase
+    let result: { data: unknown[] | null; error: NotificationError | null } = await supabase
       .from('pull_requests')
       .select(
         `
@@ -143,6 +170,8 @@ export async function GET() {
           part_number,
           description,
           quantity,
+          quantity_fulfilled,
+          fulfillment_status,
           location,
           notes
         )
@@ -150,11 +179,36 @@ export async function GET() {
       )
       .order('created_at', { ascending: false });
 
-    if (error) {
+    if (result.error && isMissingFulfillmentColumns(result.error)) {
+      result = await supabase
+        .from('pull_requests')
+        .select(
+          `
+          id,
+          request_number,
+          status,
+          requested_by,
+          created_at,
+          pull_request_lines (
+            id,
+            request_id,
+            item_id,
+            part_number,
+            description,
+            quantity,
+            location,
+            notes
+          )
+        `
+        )
+        .order('created_at', { ascending: false });
+    }
+
+    if (result.error) {
       return NextResponse.json(
         {
           ok: false,
-          message: error.message,
+          message: result.error.message,
         },
         { status: 500 }
       );
@@ -162,7 +216,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
-      requests: data ?? [],
+      requests: result.data ?? [],
     });
   } catch (error) {
     return NextResponse.json(
@@ -256,7 +310,10 @@ export async function POST(request: Request) {
       notes: line.notes,
     }));
 
-    const { error: lineError } = await supabase.from('pull_request_lines').insert(lineRows);
+    const { data: savedLines, error: lineError } = await supabase
+      .from('pull_request_lines')
+      .insert(lineRows)
+      .select('id,request_id,item_id,part_number,description,quantity,location,notes');
 
     if (lineError) {
       await supabase.from('pull_requests').delete().eq('id', pullRequest.id);
@@ -270,24 +327,44 @@ export async function POST(request: Request) {
       );
     }
 
+    const pullRequestLines = (savedLines ?? []) as SavedPullRequestLine[];
     const notificationError = await createPullRequestNotification(
       supabase,
       pullRequest,
       requestedBy
     );
 
-    const activity = await logActivity({
-      entityType: 'pull_request',
-      entityId: pullRequest.id,
-      actionType: 'PULL_REQUEST_CREATED',
-      title: `Pull request ${pullRequest.request_number} created`,
-      details: {
-        requested_by: requestedBy,
-        line_count: lineRows.length,
-      },
-      referenceNumber: pullRequest.request_number,
-      userName: requestedBy,
-    });
+    const logErrors: string[] = [];
+
+    for (const line of pullRequestLines) {
+      const logResult = await logTransaction({
+        transaction_type: 'PULL_REQUEST_CREATED',
+        item_id: line.item_id,
+        part_number: line.part_number,
+        description: line.description,
+        quantity: line.quantity,
+        to_location: line.location,
+        reference: pullRequestReference(pullRequest.request_number, line),
+        notes: line.notes,
+        performed_by: requestedBy,
+        entity_type: 'pull_request_line',
+        entity_id: line.id,
+        title: `Pull request ${pullRequest.request_number} line created`,
+        details: {
+          request_id: pullRequest.id,
+          request_number: pullRequest.request_number,
+          requested_by: requestedBy,
+          line,
+        },
+        write_inventory_transaction: true,
+        write_activity_log: true,
+        supabase,
+      });
+
+      if (logResult.ok === false) {
+        logErrors.push(`${line.id}: ${logResult.message}`);
+      }
+    }
 
     if (notificationError) {
       console.error('Pull request notification failed', {
@@ -296,10 +373,10 @@ export async function POST(request: Request) {
       });
     }
 
-    if (!activity.ok) {
+    if (logErrors.length) {
       console.error('Pull request activity logging failed', {
         pullRequestId: pullRequest.id,
-        error: 'message' in activity ? activity.message : 'Failed to write activity log.',
+        errors: logErrors,
       });
     }
 

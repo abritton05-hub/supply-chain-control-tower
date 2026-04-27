@@ -1,11 +1,17 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useTransition } from 'react';
 import { supabaseBrowser } from '@/lib/supabase/client';
 
 type LoginResult = {
   ok: boolean;
   message: string;
+};
+
+type StatusMessage = {
+  kind: 'success' | 'error';
+  text: string;
 };
 
 async function signInWithPassword(
@@ -68,7 +74,9 @@ async function sendForgotPassword(email: string): Promise<LoginResult> {
     const supabase = supabaseBrowser();
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/update-password`,
+      redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        '/update-password'
+      )}`,
     });
 
     if (error) {
@@ -91,61 +99,75 @@ async function sendForgotPassword(email: string): Promise<LoginResult> {
 export function LoginClient() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<StatusMessage | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setMessage('');
+    setMessage(null);
 
     startTransition(async () => {
       const result = await signInWithPassword(email.trim(), password);
 
       if (!result.ok) {
-        setMessage(result.message);
+        setMessage({ kind: 'error', text: result.message });
         return;
       }
 
-      setMessage(result.message);
+      setMessage({ kind: 'success', text: result.message });
     });
   }
 
   function handleMagicLink() {
-    setMessage('');
+    setMessage(null);
 
     startTransition(async () => {
       const cleanEmail = email.trim();
 
       if (!cleanEmail) {
-        setMessage('Enter your email first.');
+        setMessage({ kind: 'error', text: 'Enter your email first.' });
         return;
       }
 
       const result = await sendMagicLink(cleanEmail);
-      setMessage(result.message);
+      setMessage({
+        kind: result.ok ? 'success' : 'error',
+        text: result.message,
+      });
     });
   }
 
   function handleForgotPassword() {
-    setMessage('');
+    setMessage(null);
 
     startTransition(async () => {
       const cleanEmail = email.trim();
 
       if (!cleanEmail) {
-        setMessage('Enter your email first.');
+        setMessage({ kind: 'error', text: 'Enter your email first.' });
         return;
       }
 
       const result = await sendForgotPassword(cleanEmail);
-      setMessage(result.message);
+      setMessage({
+        kind: result.ok ? 'success' : 'error',
+        text: result.message,
+      });
     });
   }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
       <section className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-6">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <Image
+            src="/denali-logo.png"
+            alt="Denali Logistics SEA991"
+            width={156}
+            height={79}
+            priority
+            className="mb-5 h-auto w-[156px] object-contain"
+          />
           <h1 className="text-2xl font-semibold text-slate-900">
             Supply Chain Control Tower
           </h1>
@@ -175,12 +197,22 @@ export function LoginClient() {
           </div>
 
           <div>
-            <label
-              htmlFor="password"
-              className="mb-1 block text-sm font-medium text-slate-700"
-            >
-              Password
-            </label>
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-slate-700"
+              >
+                Password
+              </label>
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={isPending}
+                className="text-sm font-semibold text-cyan-700 hover:text-cyan-800 disabled:cursor-wait disabled:opacity-70"
+              >
+                Forgot password?
+              </button>
+            </div>
             <input
               id="password"
               type="password"
@@ -193,8 +225,14 @@ export function LoginClient() {
           </div>
 
           {message ? (
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              {message}
+            <div
+              className={`rounded-md border px-3 py-2 text-sm ${
+                message.kind === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-rose-200 bg-rose-50 text-rose-800'
+              }`}
+            >
+              {message.text}
             </div>
           ) : null}
 
@@ -216,14 +254,6 @@ export function LoginClient() {
               Send Magic Link
             </button>
 
-            <button
-              type="button"
-              onClick={handleForgotPassword}
-              disabled={isPending}
-              className="w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70"
-            >
-              Forgot Password / Create Password
-            </button>
           </div>
         </form>
       </section>

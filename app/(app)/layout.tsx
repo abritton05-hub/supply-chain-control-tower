@@ -21,11 +21,9 @@ export default async function ProtectedLayout({
     redirect('/login');
   }
 
-  const isAdmin = profile.role === 'admin';
-
   return (
     <div className="flex min-h-dvh flex-col bg-slate-200 print:block print:bg-white lg:min-h-screen lg:flex-row">
-      <Sidebar isAdmin={isAdmin} />
+      <Sidebar role={profile.role} />
       <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-200 print:block print:overflow-visible print:bg-white">
         <div className="mx-auto w-full max-w-[1800px] space-y-4 px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] print:space-y-0 print:p-0 sm:px-4 lg:px-6 lg:py-6">
           <TopHeader />

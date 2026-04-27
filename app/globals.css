@@ -44,6 +44,26 @@ textarea {
   @apply inline-flex min-h-11 items-center justify-center rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-60;
 }
 
+.erp-button-secondary {
+  @apply inline-flex min-h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+.erp-action-primary {
+  @apply inline-flex min-h-9 items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45;
+}
+
+.erp-action-secondary {
+  @apply inline-flex min-h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.erp-action-danger {
+  @apply inline-flex min-h-9 items-center justify-center rounded-md border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.erp-row-actions {
+  @apply flex flex-wrap items-center justify-end gap-2;
+}
+
 .erp-table th {
   @apply sticky top-0 z-10 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600;
 }
@@ -97,6 +117,7 @@ textarea {
 
   button,
   .erp-button,
+  .erp-button-secondary,
   a.erp-button {
     min-height: 44px;
   }

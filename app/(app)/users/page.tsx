@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
-import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { SectionHeader } from '@/components/section-header';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canManageUsers } from '@/lib/auth/roles';
 import { UsersClient } from './users-client';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export default async function UsersPage() {
   const profile = await getCurrentUserProfile();
 
-  if (profile.role !== 'admin') {
+  if (!canManageUsers(profile.role)) {
     redirect('/inventory');
   }
 
@@ -16,7 +17,7 @@ export default async function UsersPage() {
     <div className="space-y-4">
       <SectionHeader
         title="Users / Access"
-        subtitle="Admin-only user and access management area"
+        subtitle="Invite users and manage Supply Chain Control Tower access roles"
       />
       <UsersClient />
     </div>

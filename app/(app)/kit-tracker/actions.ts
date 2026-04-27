@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { logActivity } from '@/lib/activity/log-activity';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canEditInventory } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 import {
   BLOCK_REASONS,
@@ -102,8 +104,18 @@ function toPayload(input: KitFormInput) {
   };
 }
 
+async function requireKitTrackerAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canEditInventory(profile.role)) {
+    throw new Error('Warehouse or admin access is required to manage kits.');
+  }
+}
+
 export async function createKit(input: KitFormInput): Promise<KitActionResult> {
   try {
+    await requireKitTrackerAccess();
+
     const validation = validateKit(input);
     if (!validation.ok) return validation;
 
@@ -154,6 +166,8 @@ export async function createKit(input: KitFormInput): Promise<KitActionResult> {
 
 export async function updateKit(input: KitFormInput): Promise<KitActionResult> {
   try {
+    await requireKitTrackerAccess();
+
     if (!input.id) {
       return { ok: false, message: 'Kit ID is required for edits.' };
     }
@@ -201,6 +215,8 @@ export async function updateKit(input: KitFormInput): Promise<KitActionResult> {
 
 export async function importKits(inputs: KitFormInput[]): Promise<KitActionResult> {
   try {
+    await requireKitTrackerAccess();
+
     if (inputs.length === 0) {
       return { ok: false, message: 'No kit rows were found in the upload.' };
     }

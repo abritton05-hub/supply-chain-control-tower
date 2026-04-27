@@ -4,11 +4,10 @@ import { SectionHeader } from '@/components/section-header';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { canViewTransactions } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
+import { TRANSACTION_TYPES } from '@/lib/transactions/log-transaction';
 import type { InventoryTransaction } from '../receiving/types';
 
 export const dynamic = 'force-dynamic';
-
-const TRANSACTION_TYPES = ['RECEIPT', 'ISSUE', 'TRANSFER'] as const;
 
 type TransactionTypeFilter = (typeof TRANSACTION_TYPES)[number];
 
@@ -30,7 +29,13 @@ function selectedType(value: string | string[] | undefined): TransactionTypeFilt
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '-';
-  return new Date(`${value}T00:00:00`).toLocaleDateString();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}T00:00:00`)
+    : new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString();
 }
 
 function displayValue(value: string | number | null | undefined) {
@@ -138,15 +143,23 @@ export default async function TransactionsPage({ searchParams }: Props) {
                   </tr>
                 ) : (
                   transactions.map((row) => (
-                    <tr key={row.id} className="border-b border-slate-100 align-top">
+                    <tr
+                      key={row.id}
+                      id={`transaction-${row.id}`}
+                      className="scroll-mt-24 border-b border-slate-100 align-top target:bg-cyan-50"
+                    >
                       <td className="px-4 py-3 text-slate-700">
                         {formatDate(row.transaction_date)}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{row.transaction_type}</td>
                       <td className="px-4 py-3 font-medium">
-                        <Link href={`/inventory/${row.item_id}`} className="text-cyan-700 hover:underline">
-                          {row.item_id}
-                        </Link>
+                        {row.item_id ? (
+                          <Link href={`/inventory/${row.item_id}`} className="text-cyan-700 hover:underline">
+                            {row.item_id}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-500">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{displayValue(row.part_number)}</td>
                       <td className="px-4 py-3 text-slate-700">{displayValue(row.description)}</td>

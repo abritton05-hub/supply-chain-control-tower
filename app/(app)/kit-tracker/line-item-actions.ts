@@ -1,6 +1,8 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { canEditInventory } from '@/lib/auth/roles';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import type { ImportActionResult, ImportSummary } from '@/lib/import-workflow/types';
 import {
@@ -14,6 +16,14 @@ import type {
   KitLineImportInput,
   KitLineImportResult,
 } from './line-item-types';
+
+async function requireKitTrackerAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canEditInventory(profile.role)) {
+    throw new Error('Warehouse or admin access is required to manage kit readiness.');
+  }
+}
 
 async function getExistingSourceKeys(rows: KitLineImportInput[]) {
   const sourceKeys = Array.from(
@@ -56,6 +66,8 @@ export async function previewKitLineItemsImport(
   rows: KitLineImportInput[]
 ): Promise<ImportActionResult<KitLineImportInput>> {
   try {
+    await requireKitTrackerAccess();
+
     if (rows.length === 0) {
       return { ok: false, message: 'No readiness rows were found.' };
     }
@@ -95,6 +107,8 @@ export async function importKitLineItems(
   rows: KitLineImportInput[]
 ): Promise<KitLineImportResult> {
   try {
+    await requireKitTrackerAccess();
+
     if (rows.length === 0) {
       return { ok: false, message: 'No readiness rows were found.' };
     }
@@ -177,6 +191,8 @@ export async function createKitLineItem(
   input: KitLineImportInput
 ): Promise<KitLineImportResult> {
   try {
+    await requireKitTrackerAccess();
+
     const normalized = normalizeManualLine(input);
 
     if (isBlankKitLine(normalized)) {
@@ -216,6 +232,8 @@ export async function updateKitLineItem(
   input: KitLineImportInput
 ): Promise<KitLineImportResult> {
   try {
+    await requireKitTrackerAccess();
+
     const normalized = normalizeManualLine(input);
 
     if (!id) {

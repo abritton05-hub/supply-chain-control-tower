@@ -1,8 +1,13 @@
-﻿'use client';
+'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
+import { StickyNotes } from '@/components/sticky-notes';
+import {
+  buildShippingManifestLabelPayload,
+  downloadLabelPayloadsCsv
+} from '@/lib/labels/p-touch';
 import type { DeliveryPageData } from './types';
 
 const DEFAULT_SITE = 'SEA991';
@@ -21,6 +26,18 @@ type ShippingLocation = {
   notes: string | null;
 };
 
+type StopLineItem = {
+  id: string;
+  stopId: string;
+  partNumber: string;
+  itemId: string;
+  description: string;
+  quantity: string;
+  boxCount: string;
+  notes: string;
+  createdAt: string;
+};
+
 type StopRow = {
   id: string;
   manifestNumber: string;
@@ -36,6 +53,8 @@ type StopRow = {
   toAddress: string;
   contact: string;
   items: string;
+  boxCount: string;
+  lineItems: StopLineItem[];
   notes: string;
   status: string;
   createdAt: string;
@@ -54,6 +73,10 @@ type BomDraft = {
   notes: string;
 };
 
+type DeliveryClientProps = DeliveryPageData & {
+  canManageDelivery: boolean;
+};
+
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -68,9 +91,9 @@ function clean(value: string | null | undefined) {
 
 function fixBadEncodingCharacters(text: string) {
   return text
-    .replace(/\u00e2\u20ac\u201d/g, 'â€”')
-    .replace(/\u00e2\u20ac\u201c/g, 'â€“')
-    .replace(/\u00c3\u2014/g, 'Ã—')
+    .replace(/\u00e2\u20ac\u201d/g, '—')
+    .replace(/\u00e2\u20ac\u201c/g, '–')
+    .replace(/\u00c3\u2014/g, '×')
     .replace(/\u00e2\u20ac\u2122/g, "'")
     .replace(/\u00e2\u20ac\u0153/g, '"')
     .replace(/\u00e2\u20ac\u009d/g, '"');
@@ -120,7 +143,7 @@ function contactForLocation(locations: ShippingLocation[], code: string) {
 function locationOptionLabel(location: ShippingLocation) {
   const code = normalizeLocation(location.code || '');
   const displayName = clean(location.display_name);
-  return displayName ? `${code} â€” ${displayName}` : code;
+  return displayName ? `${code} — ${displayName}` : code;
 }
 
 function displayStopAddress(location: string, address: string) {
@@ -130,6 +153,254 @@ function displayStopAddress(location: string, address: string) {
   if (!stopAddress) return stopLocation;
   if (!stopLocation) return stopAddress;
   return `${stopLocation}\n${stopAddress}`;
+}
+
+function oneLine(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function formatStopLineItem(line: StopLineItem) {
+  const quantity = clean(line.quantity);
+  const part = itemIdentifier(line);
+  const description = clean(line.description);
+  const boxes = clean(line.boxCount);
+  const notes = clean(line.notes);
+
+  return [
+    quantity ? `${quantity}x` : '',
+    part,
+    description,
+    boxes && boxes !== '1' ? `Boxes: ${boxes}` : '',
+    notes,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function stopItemsText(row: Pick<StopRow, 'items' | 'lineItems'>) {
+  const structuredItems = row.lineItems.map(formatStopLineItem).filter(Boolean);
+  return structuredItems.length ? structuredItems.join('\n') : row.items;
+}
+
+function formatStopLinesForBom(row: Pick<StopRow, 'items' | 'lineItems'>) {
+  const structuredItems = validStructuredLines(row.lineItems).map((line) =>
+    [
+      parseQuantity(line.quantity) || 1,
+      itemIdentifier(line) || '-',
+      clean(line.description) || '-',
+      parseBoxCount(line.boxCount),
+      clean(line.notes),
+    ].join('\t')
+  );
+
+  return structuredItems.length ? structuredItems.join('\n') : row.items;
+}
+
+function parseBomPrintableLines(items: string) {
+  return items
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split('\t');
+
+      if (parts.length >= 4) {
+        return {
+          quantity: parts[0] || '-',
+          part: parts[1] || '-',
+          description: parts[2] || '-',
+          boxCount: parts[3] || '0',
+        };
+      }
+
+      return {
+        quantity: '-',
+        part: '-',
+        description: line,
+        boxCount: '-',
+      };
+    });
+}
+
+function printableStopLines(row: Pick<StopRow, 'items' | 'lineItems'>) {
+  const structuredItems = validStructuredLines(row.lineItems).map((line) => ({
+    quantity: String(parseQuantity(line.quantity) || 1),
+    part: itemIdentifier(line) || '-',
+    description: clean(line.description) || '-',
+    boxCount: String(parseBoxCount(line.boxCount)),
+  }));
+
+  if (structuredItems.length) return structuredItems;
+
+  return row.items
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => ({
+      quantity: '-',
+      part: '-',
+      description: line,
+      boxCount: '-',
+    }));
+}
+
+function itemIdentifier(line: Pick<StopLineItem, 'partNumber' | 'itemId'>) {
+  return clean(line.partNumber) || clean(line.itemId);
+}
+
+function parseQuantity(value: string) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function parseBoxCount(value: string) {
+  if (!clean(value)) return 0;
+
+  const numeric = Number.parseInt(value, 10);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+function validStructuredLines(lines: StopLineItem[]) {
+  return lines.filter(
+    (line) =>
+      parseQuantity(line.quantity) > 0 &&
+      (itemIdentifier(line) || clean(line.description))
+  );
+}
+
+function totalItemQuantity(lines: StopLineItem[]) {
+  return validStructuredLines(lines).reduce((sum, line) => sum + parseQuantity(line.quantity), 0);
+}
+
+function totalLineBoxCount(lines: StopLineItem[]) {
+  return validStructuredLines(lines).reduce((sum, line) => sum + parseBoxCount(line.boxCount), 0);
+}
+
+function totalLabelCount(lines: StopLineItem[]) {
+  return totalLineBoxCount(lines) * 2;
+}
+
+function stopStatusIsComplete(status: string) {
+  const normalized = status.trim().toLowerCase();
+  return normalized === 'complete' || normalized === 'completed' || normalized === 'closed';
+}
+
+function createEmptyStopLine(stopId: string): StopLineItem {
+  return {
+    id: newId('line'),
+    stopId,
+    partNumber: '',
+    itemId: '',
+    description: '',
+    quantity: '1',
+    boxCount: '1',
+    notes: '',
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function validateStopLineItems(lines: StopLineItem[]) {
+  const errors: string[] = [];
+
+  lines.forEach((line, index) => {
+    const label = `Line ${index + 1}`;
+    const hasContent =
+      itemIdentifier(line) || clean(line.description) || clean(line.notes) || clean(line.quantity);
+
+    if (!hasContent) return;
+    if (parseQuantity(line.quantity) <= 0) errors.push(`${label}: qty must be greater than 0.`);
+    if (Number(line.boxCount) < 0) errors.push(`${label}: box count cannot be negative.`);
+    if (!itemIdentifier(line) && !clean(line.description)) {
+      errors.push(`${label}: enter a part/item or description.`);
+    }
+  });
+
+  return errors;
+}
+
+function buildStopLabelPayloads(row: StopRow) {
+  const from = displayStopAddress(row.fromLocation, row.fromAddress);
+  const to = displayStopAddress(row.toLocation, row.toAddress);
+  const direction = formatType(row.direction);
+  const reference =
+    [row.reference, row.shipmentTransferId].map(clean).filter(Boolean).join(' | ') ||
+    row.manifestNumber;
+  const location = `${oneLine(from)} to ${oneLine(to)}`;
+  const payloads: ReturnType<typeof buildShippingManifestLabelPayload>[] = [];
+  const lines = validStructuredLines(row.lineItems);
+
+  if (lines.length) {
+    for (const line of lines) {
+      const lineBoxCount = parseBoxCount(line.boxCount);
+      if (lineBoxCount <= 0) continue;
+
+      const part = itemIdentifier(line) || row.shipmentTransferId || row.reference || row.manifestNumber;
+      const lineDescription = [
+        clean(line.description),
+        direction,
+        `From: ${oneLine(from)}`,
+        `To: ${oneLine(to)}`,
+        clean(line.notes),
+      ]
+        .filter(Boolean)
+        .join(' | ');
+
+      for (let boxIndex = 1; boxIndex <= lineBoxCount; boxIndex += 1) {
+        for (let labelIndex = 1; labelIndex <= 2; labelIndex += 1) {
+          payloads.push(
+            buildShippingManifestLabelPayload({
+              manifestNumber: row.manifestNumber,
+              stopId: row.id,
+              partNumber: part,
+              itemId: line.itemId || line.partNumber || `Box ${boxIndex}/${lineBoxCount}`,
+              description: lineDescription,
+              quantity: line.quantity,
+              location,
+              reference: `${reference} | ${direction} | Box ${boxIndex}/${lineBoxCount}`,
+              date: row.date,
+            })
+          );
+        }
+      }
+    }
+
+    return payloads;
+  }
+
+  const legacyBoxCount = parseBoxCount(row.boxCount);
+  const itemsText = stopItemsText(row);
+  const legacyDescription = [
+    direction,
+    `From: ${oneLine(from)}`,
+    `To: ${oneLine(to)}`,
+    itemsText ? `Items: ${oneLine(itemsText)}` : '',
+  ]
+    .filter(Boolean)
+    .join(' | ');
+
+  for (let boxIndex = 1; boxIndex <= legacyBoxCount; boxIndex += 1) {
+    for (let labelIndex = 1; labelIndex <= 2; labelIndex += 1) {
+      payloads.push(
+        buildShippingManifestLabelPayload({
+          manifestNumber: row.manifestNumber,
+          stopId: row.id,
+          partNumber: row.shipmentTransferId || row.reference || row.manifestNumber,
+          itemId: `Box ${boxIndex}/${legacyBoxCount} Label ${labelIndex}/2`,
+          description: legacyDescription,
+          quantity: '1',
+          location,
+          reference: `${reference} | ${direction} | Box ${boxIndex}/${legacyBoxCount}`,
+          date: row.date,
+        })
+      );
+    }
+  }
+
+  return payloads;
 }
 
 function manifestNumberForDate(date: string, rows: StopRow[]) {
@@ -175,6 +446,8 @@ function emptyStop(
     toAddress: toLocation ? addressForLocation(locations, toLocation) : '',
     contact: isPickup ? '' : contactForLocation(locations, toLocation),
     items: '',
+    boxCount: '1',
+    lineItems: [],
     notes: '',
     status: 'Manual',
     createdAt: new Date().toISOString(),
@@ -208,6 +481,18 @@ async function loadManifestRows(): Promise<StopRow[]> {
     toAddress: fixBadEncodingCharacters(row.to_address || ''),
     contact: fixBadEncodingCharacters(row.contact || ''),
     items: fixBadEncodingCharacters(row.items || ''),
+    boxCount: row.box_count ? String(row.box_count) : '1',
+    lineItems: (row.line_items || row.stop_items || []).map((item: any) => ({
+      id: item.id || '',
+      stopId: item.stop_id || row.id || '',
+      partNumber: fixBadEncodingCharacters(item.part_number || ''),
+      itemId: fixBadEncodingCharacters(item.item_id || ''),
+      description: fixBadEncodingCharacters(item.description || ''),
+      quantity: item.quantity ? String(item.quantity) : '1',
+      boxCount: item.box_count === null || item.box_count === undefined ? '1' : String(item.box_count),
+      notes: fixBadEncodingCharacters(item.notes || ''),
+      createdAt: item.created_at || '',
+    })),
     notes: fixBadEncodingCharacters(row.notes || ''),
     status: row.status || 'Draft',
     createdAt: row.created_at || '',
@@ -234,6 +519,11 @@ async function loadBomRows(): Promise<BomDraft[]> {
 }
 
 async function saveManifestRow(row: StopRow, method: 'POST' | 'PATCH') {
+  const structuredLines = validStructuredLines(row.lineItems);
+  const savedBoxCount = structuredLines.length
+    ? totalLineBoxCount(structuredLines)
+    : parseBoxCount(row.boxCount) || 1;
+
   const res = await fetch('/api/shipping/manifest-history', {
     method,
     headers: { 'Content-Type': 'application/json' },
@@ -250,8 +540,23 @@ async function saveManifestRow(row: StopRow, method: 'POST' | 'PATCH') {
       from_address: row.fromAddress,
       to_location: row.toLocation,
       to_address: row.toAddress,
-      contact: row.direction === 'incoming' ? '' : row.contact,
+      contact: row.contact,
       items: row.items,
+      box_count: savedBoxCount || 1,
+      ...(structuredLines.length
+        ? {
+            line_items: structuredLines.map((line) => ({
+              id: line.id || undefined,
+              stop_id: row.id,
+              part_number: line.partNumber,
+              item_id: line.itemId,
+              description: line.description,
+              quantity: parseQuantity(line.quantity) || 1,
+              box_count: parseBoxCount(line.boxCount),
+              notes: line.notes,
+            })),
+          }
+        : {}),
       notes: row.notes,
       status: row.status,
     }),
@@ -308,11 +613,13 @@ function printElementById(id: string) {
           .label { font-size: 10px; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.05em; }
           .value { margin-top: 4px; font-size: 12px; font-weight: 700; white-space: pre-wrap; }
           table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-          table th:nth-child(6), table td:nth-child(6) { width: 26%; }
-          table th:nth-child(3), table td:nth-child(3), table th:nth-child(4), table td:nth-child(4) { width: 18%; }
           th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; font-size: 11px; }
           th { background: #f1f5f9; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
           pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 11px; margin: 0; }
+          .item-lines { display: grid; gap: 3px; min-width: 260px; }
+          .item-line { display: grid; grid-template-columns: 34px 92px minmax(120px, 1fr) 42px; gap: 4px; border-bottom: 1px solid #e2e8f0; padding: 2px 0; }
+          .item-line:last-child { border-bottom: 0; }
+          .item-head { color: #475569; font-size: 9px; font-weight: 800; text-transform: uppercase; }
           .box { border: 1px solid #cbd5e1; padding: 10px; margin-top: 12px; }
           .box-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 6px; }
           .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
@@ -340,18 +647,28 @@ function StopModal({
   row: StopRow | null;
   locations: ShippingLocation[];
   onClose: () => void;
-  onSave: (row: StopRow) => void;
+  onSave: (row: StopRow, exportLabelsAfterSave: boolean) => void;
   onCreateBom: (row: StopRow) => void;
 }) {
   const [draft, setDraft] = useState<StopRow | null>(row);
+  const [exportLabelsAfterSave, setExportLabelsAfterSave] = useState(true);
 
   useEffect(() => {
     setDraft(row);
+    setExportLabelsAfterSave(true);
   }, [row]);
 
   if (!draft) return null;
 
-  function update(field: keyof StopRow, value: string) {
+  const hasStructuredLines = draft.lineItems.length > 0;
+  const legacyFallbackVisible = !hasStructuredLines && Boolean(clean(draft.items));
+  const totalQuantity = totalItemQuantity(draft.lineItems);
+  const totalBoxes = hasStructuredLines ? totalLineBoxCount(draft.lineItems) : parseBoxCount(draft.boxCount);
+  const totalLabels = hasStructuredLines ? totalLabelCount(draft.lineItems) : totalBoxes * 2;
+  const labelsToCreate = exportLabelsAfterSave ? totalLabels : 0;
+  const validationErrors = validateStopLineItems(draft.lineItems);
+
+  function update(field: Exclude<keyof StopRow, 'lineItems'>, value: string) {
     setDraft((current) => (current ? { ...current, [field]: value } : current));
   }
 
@@ -368,7 +685,7 @@ function StopModal({
           ...current,
           fromLocation: normalized,
           fromAddress: address,
-          contact: current.direction === 'incoming' ? '' : current.contact,
+          contact: current.direction === 'incoming' ? contact || current.contact : current.contact,
         };
       }
 
@@ -376,9 +693,44 @@ function StopModal({
         ...current,
         toLocation: normalized,
         toAddress: address,
-        contact: current.direction === 'incoming' ? '' : contact || current.contact,
+        contact: current.direction === 'outgoing' ? contact || current.contact : current.contact,
       };
     });
+  }
+
+  function addLine() {
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            lineItems: [...current.lineItems, createEmptyStopLine(current.id)],
+          }
+        : current
+    );
+  }
+
+  function removeLine(index: number) {
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            lineItems: current.lineItems.filter((_, lineIndex) => lineIndex !== index),
+          }
+        : current
+    );
+  }
+
+  function updateLine(index: number, field: keyof StopLineItem, value: string) {
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            lineItems: current.lineItems.map((line, lineIndex) =>
+              lineIndex === index ? { ...line, [field]: value } : line
+            ),
+          }
+        : current
+    );
   }
 
   return (
@@ -404,6 +756,14 @@ function StopModal({
           </button>
         </div>
 
+        <div className="mt-4">
+          <StickyNotes
+            entityType="delivery_stop"
+            entityId={draft.id}
+            title={`${formatType(draft.direction)} Notes`}
+          />
+        </div>
+
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <label className="text-sm font-semibold text-slate-700">
             Manifest #
@@ -417,6 +777,11 @@ function StopModal({
           <TextInput label="Title" value={draft.title} onChange={(value) => update('title', value)} />
           <DateInput label="Date" value={draft.date} onChange={(value) => update('date', value)} />
           <TextInput label="Time / Window" value={draft.time} onChange={(value) => update('time', value)} />
+          <NumberInput
+            label="Box Count"
+            value={draft.boxCount}
+            onChange={(value) => update('boxCount', value)}
+          />
           <TextInput
             label="PO / Shipment / Transfer ID"
             value={draft.shipmentTransferId}
@@ -460,35 +825,160 @@ function StopModal({
             />
           </div>
 
-          <div className="md:col-span-2">
-            <div className="flex items-center justify-between gap-3">
-              <label className="text-sm font-semibold text-slate-700">Items / PN / Qty</label>
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white">
+            <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Item Lines</h3>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-slate-500">
+                  <span>Total qty: {totalQuantity || 0}</span>
+                  <span>Total boxes: {totalBoxes || 0}</span>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => update('items', draft.items.trim() ? `${draft.items.trim()}\n1x ` : '1x ')}
+                onClick={addLine}
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
               >
-                Add Item Line
+                Add Line
               </button>
             </div>
-            <textarea
-              value={draft.items}
-              onChange={(event) => update('items', event.target.value)}
-              className="mt-1 min-h-[150px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
-              spellCheck={false}
-            />
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.08em] text-slate-500">
+                  <tr>
+                    <th className="w-20 px-3 py-2">Qty</th>
+                    <th className="w-36 px-3 py-2">Part #</th>
+                    <th className="w-36 px-3 py-2">Item ID</th>
+                    <th className="min-w-56 px-3 py-2">Description</th>
+                    <th className="w-24 px-3 py-2">Boxes</th>
+                    <th className="min-w-48 px-3 py-2">Notes</th>
+                    <th className="w-20 px-3 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {draft.lineItems.length ? (
+                    draft.lineItems.map((line, index) => (
+                      <tr key={line.id || `${draft.id}-line-${index}`} className="align-top">
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={line.quantity}
+                            onChange={(event) => updateLine(index, 'quantity', event.target.value)}
+                            className="h-9 w-full rounded-lg border border-slate-300 px-2 text-sm text-slate-900"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={line.partNumber}
+                            onChange={(event) => updateLine(index, 'partNumber', event.target.value)}
+                            className="h-9 w-full rounded-lg border border-slate-300 px-2 text-sm text-slate-900"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={line.itemId}
+                            onChange={(event) => updateLine(index, 'itemId', event.target.value)}
+                            className="h-9 w-full rounded-lg border border-slate-300 px-2 text-sm text-slate-900"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={line.description}
+                            onChange={(event) => updateLine(index, 'description', event.target.value)}
+                            className="h-9 w-full rounded-lg border border-slate-300 px-2 text-sm text-slate-900"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={line.boxCount}
+                            onChange={(event) => updateLine(index, 'boxCount', event.target.value)}
+                            className="h-9 w-full rounded-lg border border-slate-300 px-2 text-sm text-slate-900"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={line.notes}
+                            onChange={(event) => updateLine(index, 'notes', event.target.value)}
+                            className="h-9 w-full rounded-lg border border-slate-300 px-2 text-sm text-slate-900"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => removeLine(index)}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
+                        No structured lines yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {validationErrors.length ? (
+              <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                {validationErrors.join(' ')}
+              </div>
+            ) : null}
           </div>
+
+          {legacyFallbackVisible ? (
+            <div className="md:col-span-2">
+              <TextArea
+                label="Legacy Items / PN / Qty"
+                value={draft.items}
+                onChange={(value) => update('items', value)}
+              />
+            </div>
+          ) : null}
 
           <div className="md:col-span-2">
             <TextArea label="Notes" value={draft.notes} onChange={(value) => update('notes', value)} />
+          </div>
+
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-slate-700">
+                <div className="font-semibold">P-touch labels: 2 per box</div>
+                <div className="mt-1 text-slate-500">
+                  Total boxes: {totalBoxes || 0} · Total P-touch labels: {totalLabels || 0}
+                  {exportLabelsAfterSave ? ` · Labels to export: ${labelsToCreate}` : ''}
+                </div>
+              </div>
+              <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={exportLabelsAfterSave}
+                  onChange={(event) => setExportLabelsAfterSave(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-cyan-700 focus:ring-cyan-700"
+                />
+                Export P-touch labels after save
+              </label>
+            </div>
           </div>
         </div>
 
         <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button
             type="button"
-            onClick={() => onSave(draft)}
-            className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
+            onClick={() => onSave(draft, exportLabelsAfterSave)}
+            disabled={validationErrors.length > 0}
+            className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Save Changes
           </button>
@@ -551,6 +1041,31 @@ function DateInput({
   );
 }
 
+function NumberInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="text-sm font-semibold text-slate-700">
+      {label}
+      <input
+        type="number"
+        min="1"
+        step="1"
+        inputMode="numeric"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+      />
+    </label>
+  );
+}
+
 function TextArea({
   label,
   value,
@@ -602,13 +1117,48 @@ function LocationSelect({
   );
 }
 
+function PrintableItemLines({
+  lines,
+}: {
+  lines: Array<{ quantity: string; part: string; description: string; boxCount: string }>;
+}) {
+  if (!lines.length) return <span>-</span>;
+
+  return (
+    <div className="item-lines">
+      <div className="item-line item-head">
+        <span>Qty</span>
+        <span>Part / Item</span>
+        <span>Description</span>
+        <span>Boxes</span>
+      </div>
+      {lines.map((line, index) => (
+        <div key={`${line.part}-${line.description}-${index}`} className="item-line">
+          <span>{line.quantity}</span>
+          <span>{line.part}</span>
+          <span>{line.description}</span>
+          <span>{line.boxCount}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PrintableBom({ bom }: { bom: BomDraft }) {
+  const bomLines = parseBomPrintableLines(bom.items || '');
+
   return (
     <div id={`print-bom-${bom.bomNumber}`} className="hidden">
       <div className="document">
         <div className="header">
-          {/* eslint-disable-next-line @next/next/no-img-element -- Plain img preserves print-only document output. */}
-          <img src={DENALI_LOGO_SRC} alt="Denali Advanced Integration" className="logo" />
+          <Image
+            src={DENALI_LOGO_SRC}
+            alt="Denali Advanced Integration"
+            width={190}
+            height={64}
+            className="logo"
+            unoptimized
+          />
           <div className="title-block">
             <h1>BOM / Release</h1>
             <p>BOM #: {bom.bomNumber}</p>
@@ -632,17 +1182,32 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
           <thead>
             <tr>
               <th>Line</th>
-              <th>Item / PN / Qty</th>
+              <th>Qty</th>
+              <th>Part Number / Item ID</th>
+              <th>Description</th>
+              <th>Box Count</th>
             </tr>
           </thead>
           <tbody>
-            {(bom.items || '')
-              .split('\n')
-              .filter(Boolean)
-              .map((item, index) => (
-                <tr key={`${bom.bomNumber}-${index}`}>                  <td>{item}</td>
+            {bomLines.length ? (
+              bomLines.map((line, index) => (
+                <tr key={`${bom.bomNumber}-${index}`}>
+                  <td>{index + 1}</td>
+                  <td>{line.quantity}</td>
+                  <td>{line.part}</td>
+                  <td>{line.description}</td>
+                  <td>{line.boxCount}</td>
                 </tr>
-              ))}
+              ))
+            ) : (
+              <tr>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+              </tr>
+            )}
           </tbody>
         </table>
 
@@ -672,10 +1237,16 @@ function PrintableManifest({
     <div id={printId} className="hidden">
       <div className="document">
         <div className="header">
-          {/* eslint-disable-next-line @next/next/no-img-element -- Plain img preserves print-only document output. */}
-          <img src={DENALI_LOGO_SRC} alt="Denali Advanced Integration" className="logo" />
+          <Image
+            src={DENALI_LOGO_SRC}
+            alt="Denali Advanced Integration"
+            width={190}
+            height={64}
+            className="logo"
+            unoptimized
+          />
           <div className="title-block">
-            <h1>Route List</h1>
+            <h1>Driver Manifest</h1>
             <p>Manifest #: {manifestNumber}</p>
             <p>Date: {manifestDate || '-'}</p>
           </div>
@@ -683,17 +1254,23 @@ function PrintableManifest({
 
         <table>
           <thead>
-            <tr>              <th>Type</th>
+            <tr>
+              <th>Stop</th>
+              <th>Type</th>
               <th>Date</th>
               <th>From</th>
               <th>To</th>
               <th>PO / Ref</th>
               <th>Items</th>
-              <th>Contact</th>            </tr>
+              <th>Contact</th>
+              <th>Status</th>
+            </tr>
           </thead>
           <tbody>
             {rows.map((row, index) => (
-              <tr key={`print-row-${row.id}`}>                <td>{formatType(row.direction)}</td>
+              <tr key={`print-row-${row.id}`}>
+                <td>{index + 1}</td>
+                <td>{formatType(row.direction)}</td>
                 <td>{row.date || '-'}</td>
                 <td>
                   <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
@@ -711,9 +1288,11 @@ function PrintableManifest({
                   ) : null}
                 </td>
                 <td>
-                  <pre>{row.items || '-'}</pre>
+                  <PrintableItemLines lines={printableStopLines(row)} />
                 </td>
-                <td>{row.direction === 'incoming' ? '-' : row.contact || '-'}</td>              </tr>
+                <td>{row.contact || '-'}</td>
+                <td>{row.status || '-'}</td>
+              </tr>
             ))}
           </tbody>
         </table>
@@ -784,9 +1363,9 @@ function ManifestModal({
               src={DENALI_LOGO_SRC}
               alt="Denali Advanced Integration"
               width={176}
-              height={64}
+              height={60}
               className="h-auto w-44 object-contain"
-              priority
+              unoptimized
             />
             <div>
               <h2 className="text-2xl font-bold text-slate-950">Manifest {manifestNumber}</h2>
@@ -802,7 +1381,7 @@ function ManifestModal({
             className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
             aria-label="Close manifest"
           >
-            Ã—
+            x
           </button>
         </div>
 
@@ -842,11 +1421,17 @@ function StopsTable({
   mode,
   emptyText,
   onOpen,
+  onPrintLabels,
+  onCreateBom,
+  onMarkComplete,
 }: {
   rows: StopRow[];
   mode: 'pickup' | 'dropoff' | 'manifest';
   emptyText?: string;
   onOpen: (row: StopRow) => void;
+  onPrintLabels?: (row: StopRow) => void;
+  onCreateBom?: (row: StopRow) => void;
+  onMarkComplete?: (row: StopRow) => void;
 }) {
   const isManifest = mode === 'manifest';
   const primaryAddressLabel = isManifest || mode === 'pickup' ? 'From' : 'To';
@@ -896,17 +1481,44 @@ function StopsTable({
                     <div>{row.shipmentTransferId || '-'}</div>
                     <div className="text-xs text-slate-500">{row.reference || ''}</div>
                   </td>
-                  <td className="whitespace-pre-line px-3 py-3">{row.items || '-'}</td>
+                  <td className="whitespace-pre-line px-3 py-3">{stopItemsText(row) || '-'}</td>
                   {isManifest ? <td className="px-3 py-3">{row.contact || '-'}</td> : null}
                   {isManifest ? <td className="px-3 py-3">{row.status || '-'}</td> : null}
                   <td className="px-3 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(row)}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      Open
-                    </button>
+                    <div className="erp-row-actions">
+                      <button type="button" onClick={() => onOpen(row)} className="erp-action-primary">
+                        Open
+                      </button>
+                      {onPrintLabels ? (
+                        <button
+                          type="button"
+                          onClick={() => onPrintLabels(row)}
+                          disabled={buildStopLabelPayloads(row).length === 0}
+                          className="erp-action-secondary"
+                        >
+                          Print Labels
+                        </button>
+                      ) : null}
+                      {row.direction === 'outgoing' && onCreateBom ? (
+                        <button
+                          type="button"
+                          onClick={() => onCreateBom(row)}
+                          className="erp-action-secondary"
+                        >
+                          Create BOM
+                        </button>
+                      ) : null}
+                      {onMarkComplete ? (
+                        <button
+                          type="button"
+                          onClick={() => onMarkComplete(row)}
+                          disabled={stopStatusIsComplete(row.status)}
+                          className="erp-action-secondary"
+                        >
+                          {stopStatusIsComplete(row.status) ? 'Complete' : 'Mark Complete'}
+                        </button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               );
@@ -927,7 +1539,7 @@ function StopsTable({
   );
 }
 
-export function DeliveryClient(_props: DeliveryPageData) {
+export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
   const [rows, setRows] = useState<StopRow[]>([]);
   const [locations, setLocations] = useState<ShippingLocation[]>([]);
   const [selectedRow, setSelectedRow] = useState<StopRow | null>(null);
@@ -1001,6 +1613,11 @@ export function DeliveryClient(_props: DeliveryPageData) {
   }
 
   async function addStop(direction: Direction) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to change delivery records.');
+      return;
+    }
+
     try {
       const manifestNumber = manifestNumberForDate(selectedManifestDate, rows);
       const row = emptyStop(direction, manifestNumber, selectedManifestDate, locations);
@@ -1017,22 +1634,49 @@ export function DeliveryClient(_props: DeliveryPageData) {
     }
   }
 
-  async function handleSaveRow(row: StopRow) {
+  async function handleSaveRow(row: StopRow, exportLabelsAfterSave: boolean) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to change delivery records.');
+      return;
+    }
+
     try {
+      const validationErrors = validateStopLineItems(row.lineItems);
+      if (validationErrors.length) {
+        throw new Error(validationErrors.join(' '));
+      }
+
       const rowDate = row.date || selectedManifestDate || today();
       const manifestNumber = manifestNumberForDate(
         rowDate,
         rows.filter((existing) => existing.id !== row.id)
       );
-      const rowToSave = { ...row, date: rowDate, manifestNumber };
+      const boxCount = parseBoxCount(row.boxCount);
+      const structuredBoxCount = totalLineBoxCount(row.lineItems);
+      const rowToSave = {
+        ...row,
+        date: rowDate,
+        manifestNumber,
+        boxCount: row.lineItems.length
+          ? String(structuredBoxCount)
+          : boxCount > 0
+            ? String(boxCount)
+            : clean(row.boxCount),
+      };
+      const labelPayloads = buildStopLabelPayloads(rowToSave);
+      const shouldExportLabels = exportLabelsAfterSave && labelPayloads.length > 0;
+      const exportedLabelCount = shouldExportLabels ? labelPayloads.length : 0;
 
       setLoadingLabel('Saving manifest stop...');
       await saveManifestRow(rowToSave, 'PATCH');
+      if (shouldExportLabels) {
+        downloadLabelPayloadsCsv(labelPayloads, `${manifestNumber}-${rowToSave.id}-labels`);
+      }
       await refreshData();
       setSelectedRow(null);
       setSelectedManifestDate(rowDate);
       setSelectedManifestNumber(manifestNumber);
-      setMessage(`${formatType(row.direction)} saved.`);
+      setMessage(`Stop saved. ${exportedLabelCount} labels exported.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Save failed.');
     } finally {
@@ -1041,6 +1685,11 @@ export function DeliveryClient(_props: DeliveryPageData) {
   }
 
   async function handleCreateBom(row: StopRow) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to create BOMs.');
+      return;
+    }
+
     try {
       const bomNumber = createBomNumber(bomDrafts.map((bom) => bom.bomNumber).filter(Boolean));
       const bom: BomDraft = {
@@ -1051,8 +1700,8 @@ export function DeliveryClient(_props: DeliveryPageData) {
         reference: row.reference || row.shipmentTransferId,
         shipFrom: displayStopAddress(row.fromLocation, row.fromAddress),
         shipTo: displayStopAddress(row.toLocation, row.toAddress),
-        contact: row.direction === 'incoming' ? '' : row.contact,
-        items: row.items,
+        contact: row.contact,
+        items: formatStopLinesForBom(row),
         notes: row.notes,
       };
 
@@ -1067,6 +1716,54 @@ export function DeliveryClient(_props: DeliveryPageData) {
     }
   }
 
+  function handlePrintStopLabels(row: StopRow) {
+    const labelPayloads = buildStopLabelPayloads(row);
+
+    if (!labelPayloads.length) {
+      setMessage('No labels were created. Add a box count or structured stop items first.');
+      return;
+    }
+
+    downloadLabelPayloadsCsv(labelPayloads, `${row.manifestNumber || 'manifest'}-${row.id}-labels`);
+    setMessage(`${labelPayloads.length} label record(s) exported for ${row.manifestNumber || row.id}.`);
+  }
+
+  function handlePrintManifestLabels(manifestNumber: string, manifestRows: StopRow[]) {
+    const labelPayloads = manifestRows.flatMap(buildStopLabelPayloads);
+
+    if (!labelPayloads.length) {
+      setMessage(`No labels were created for manifest ${manifestNumber}.`);
+      return;
+    }
+
+    downloadLabelPayloadsCsv(labelPayloads, `${manifestNumber}-labels`);
+    setMessage(`${labelPayloads.length} label record(s) exported for manifest ${manifestNumber}.`);
+  }
+
+  async function handleMarkStopComplete(row: StopRow) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (stopStatusIsComplete(row.status)) return;
+
+    if (!window.confirm(`Mark ${formatType(row.direction)} ${row.shipmentTransferId || row.reference || row.id} complete?`)) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Marking stop complete...');
+      await saveManifestRow({ ...row, status: 'Completed' }, 'PATCH');
+      await refreshData();
+      setMessage(`${formatType(row.direction)} marked complete.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not mark stop complete.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
   function openManifest(manifestNumber: string, manifestDate: string) {
     setSelectedManifestDate(manifestDate);
     setSelectedManifestNumber(manifestNumber);
@@ -1076,6 +1773,10 @@ export function DeliveryClient(_props: DeliveryPageData) {
 
   async function saveSelectedManifest() {
     if (!selectedManifestNumber) return;
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to save manifests.');
+      return;
+    }
 
     try {
       setLoadingLabel('Saving manifest...');
@@ -1102,7 +1803,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h2 className="text-lg font-bold text-slate-950">Shipping Control</h2>
+            <h2 className="text-lg font-bold text-slate-950">Shipping & Delivery Control</h2>
             <p className="mt-1 text-sm text-slate-500">
               Manual pickups, drop offs, manifest history, and BOM release paperwork.
             </p>
@@ -1115,20 +1816,24 @@ export function DeliveryClient(_props: DeliveryPageData) {
             >
               Address Book
             </Link>
-            <button
-              type="button"
-              onClick={() => addStop('incoming')}
-              className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
-            >
-              Add Pickup
-            </button>
-            <button
-              type="button"
-              onClick={() => addStop('outgoing')}
-              className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
-            >
-              Add Drop Off
-            </button>
+            {canManageDelivery ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => addStop('incoming')}
+                  className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
+                >
+                  Add Pickup
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addStop('outgoing')}
+                  className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                >
+                  Add Drop Off
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               onClick={() => printElementById('print-selected-manifest')}
@@ -1160,7 +1865,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
           />
         </div>
 
-        <Stat label="Selected Manifest" value={selectedDateManifestNumber || 'DAI-Mâ€”'} />
+        <Stat label="Selected Manifest" value={selectedDateManifestNumber || 'DAI-M-'} />
         <Stat label="Pickups" value={String(pickups.length)} />
         <Stat label="Drop Offs" value={String(dropOffs.length)} />
         <Stat label="Saved BOMs" value={String(bomDrafts.length)} />
@@ -1174,6 +1879,8 @@ export function DeliveryClient(_props: DeliveryPageData) {
             mode="pickup"
             emptyText={`No pickups for ${selectedManifestDate}.`}
             onOpen={setSelectedRow}
+            onPrintLabels={handlePrintStopLabels}
+            onMarkComplete={handleMarkStopComplete}
           />
         </section>
 
@@ -1184,6 +1891,9 @@ export function DeliveryClient(_props: DeliveryPageData) {
             mode="dropoff"
             emptyText={`No drop offs for ${selectedManifestDate}.`}
             onOpen={setSelectedRow}
+            onPrintLabels={handlePrintStopLabels}
+            onCreateBom={handleCreateBom}
+            onMarkComplete={handleMarkStopComplete}
           />
         </section>
       </div>
@@ -1220,7 +1930,7 @@ export function DeliveryClient(_props: DeliveryPageData) {
                             <button
                               type="button"
                               onClick={() => openManifest(manifestNumber, date)}
-                              className="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-800"
+                              className="erp-action-primary"
                             >
                               Open
                             </button>
@@ -1229,9 +1939,17 @@ export function DeliveryClient(_props: DeliveryPageData) {
                               onClick={() =>
                                 printElementById(`print-manifest-history-${date}-${manifestNumber}`)
                               }
-                              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                              className="erp-action-secondary"
                             >
                               Print
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePrintManifestLabels(manifestNumber, manifestRows)}
+                              disabled={manifestRows.flatMap(buildStopLabelPayloads).length === 0}
+                              className="erp-action-secondary"
+                            >
+                              Print Labels
                             </button>
                           </div>
 
