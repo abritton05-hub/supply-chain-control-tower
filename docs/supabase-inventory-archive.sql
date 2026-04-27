@@ -1,18 +1,18 @@
--- Transaction/audit logging support.
+-- Inventory archive support for admin-only deletes.
+-- Apply this in the Supabase SQL editor before using inventory deletion.
 --
--- The app now writes operational audit entries into inventory_transactions so
--- the existing Transactions page can show one chronological feed. Older
--- inventory-only schemas may have NOT NULL constraints on item-specific fields
--- or a narrow transaction_type check constraint; this migration widens that
--- table without changing the receiving RPC contract.
+-- Archived rows stay in public.inventory so historical transactions, pull request
+-- lines, manifests, and BOM records can continue to reference the original item ID
+-- and part number. Normal app inventory selectors filter to is_active = true.
 
-alter table if exists public.inventory_transactions
-  alter column item_id drop not null,
-  alter column part_number drop not null,
-  alter column description drop not null,
-  alter column quantity drop not null,
-  alter column from_location drop not null,
-  alter column to_location drop not null;
+alter table if exists public.inventory
+  add column if not exists is_active boolean not null default true;
+
+create index if not exists inventory_is_active_item_id_idx
+  on public.inventory(is_active, item_id);
+
+create index if not exists inventory_is_active_part_number_idx
+  on public.inventory(is_active, part_number);
 
 do $$
 declare

@@ -2,6 +2,11 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  inventoryScanHref,
+  locationScanHref,
+  parseScctBarcodePayload,
+} from '@/lib/barcodes/scct-payload';
 import type { GlobalSearchResult, GlobalSearchResultType } from '@/lib/search/global-search';
 
 type SearchResponse = {
@@ -55,6 +60,7 @@ export function GlobalSearch() {
   const [error, setError] = useState('');
 
   const trimmedQuery = query.trim();
+  const scannedPayload = useMemo(() => parseScctBarcodePayload(trimmedQuery), [trimmedQuery]);
   const grouped = useMemo(() => groupResults(results), [results]);
   const shouldShowEmpty =
     isOpen && !isLoading && !error && trimmedQuery.length >= 2 && results.length === 0;
@@ -72,6 +78,28 @@ export function GlobalSearch() {
   }, []);
 
   useEffect(() => {
+    if (!scannedPayload) return;
+
+    const href =
+      scannedPayload.type === 'inventory'
+        ? inventoryScanHref(scannedPayload)
+        : locationScanHref(scannedPayload);
+
+    if (!href) return;
+
+    setIsOpen(false);
+    setQuery('');
+    setResults([]);
+    setError('');
+    setIsLoading(false);
+    router.push(href);
+  }, [router, scannedPayload]);
+
+  useEffect(() => {
+    if (scannedPayload) {
+      return;
+    }
+
     if (trimmedQuery.length < 2) {
       setResults([]);
       setError('');
@@ -116,7 +144,7 @@ export function GlobalSearch() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [trimmedQuery]);
+  }, [scannedPayload, trimmedQuery]);
 
   function openResult(result: GlobalSearchResult | undefined) {
     if (!result) return;
@@ -136,6 +164,22 @@ export function GlobalSearch() {
 
     if (event.key === 'Enter') {
       event.preventDefault();
+
+      if (scannedPayload) {
+        const href =
+          scannedPayload.type === 'inventory'
+            ? inventoryScanHref(scannedPayload)
+            : locationScanHref(scannedPayload);
+
+        if (href) {
+          setIsOpen(false);
+          setQuery('');
+          setResults([]);
+          router.push(href);
+          return;
+        }
+      }
+
       openResult(results[0]);
     }
   }
@@ -159,7 +203,7 @@ export function GlobalSearch() {
         }}
         onKeyDown={handleKeyDown}
         className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 pr-10 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
-        placeholder="Search item, PR, manifest, PO..."
+        placeholder="Search or scan item/location..."
         autoComplete="off"
       />
 

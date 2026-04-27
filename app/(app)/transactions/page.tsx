@@ -42,6 +42,22 @@ function displayValue(value: string | number | null | undefined) {
   return value === null || value === undefined || value === '' ? '-' : value;
 }
 
+function manifestHistoryHref(row: InventoryTransaction) {
+  if (row.transaction_type !== 'MANIFEST_COMPLETED' || !row.reference) return null;
+
+  const params = new URLSearchParams({
+    view: 'history',
+    manifestStatus: 'ALL',
+    manifest: row.reference,
+  });
+
+  if (row.transaction_date) {
+    params.set('date', row.transaction_date);
+  }
+
+  return `/delivery?${params.toString()}`;
+}
+
 export default async function TransactionsPage({ searchParams }: Props) {
   const profile = await getCurrentUserProfile();
 
@@ -142,35 +158,63 @@ export default async function TransactionsPage({ searchParams }: Props) {
                     </td>
                   </tr>
                 ) : (
-                  transactions.map((row) => (
-                    <tr
-                      key={row.id}
-                      id={`transaction-${row.id}`}
-                      className="scroll-mt-24 border-b border-slate-100 align-top target:bg-cyan-50"
-                    >
-                      <td className="px-4 py-3 text-slate-700">
-                        {formatDate(row.transaction_date)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">{row.transaction_type}</td>
-                      <td className="px-4 py-3 font-medium">
-                        {row.item_id ? (
-                          <Link href={`/inventory/${row.item_id}`} className="text-cyan-700 hover:underline">
-                            {row.item_id}
-                          </Link>
-                        ) : (
-                          <span className="text-slate-500">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.part_number)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.description)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.quantity)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.from_location)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.to_location)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.reference)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.notes)}</td>
-                      <td className="px-4 py-3 text-slate-700">{displayValue(row.performed_by)}</td>
-                    </tr>
-                  ))
+                  transactions.map((row) => {
+                    const historyHref = manifestHistoryHref(row);
+
+                    return (
+                      <tr
+                        key={row.id}
+                        id={`transaction-${row.id}`}
+                        className="scroll-mt-24 border-b border-slate-100 align-top target:bg-cyan-50"
+                      >
+                        <td className="px-4 py-3 text-slate-700">
+                          {formatDate(row.transaction_date)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">{row.transaction_type}</td>
+                        <td className="px-4 py-3 font-medium">
+                          {row.item_id ? (
+                            <Link
+                              href={`/inventory/${row.item_id}`}
+                              className="text-cyan-700 hover:underline"
+                            >
+                              {row.item_id}
+                            </Link>
+                          ) : (
+                            <span className="text-slate-500">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {displayValue(row.part_number)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {displayValue(row.description)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">{displayValue(row.quantity)}</td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {displayValue(row.from_location)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {displayValue(row.to_location)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {historyHref ? (
+                            <Link
+                              href={historyHref}
+                              className="font-semibold text-cyan-700 hover:underline"
+                            >
+                              {row.reference}
+                            </Link>
+                          ) : (
+                            displayValue(row.reference)
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">{displayValue(row.notes)}</td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {displayValue(row.performed_by)}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

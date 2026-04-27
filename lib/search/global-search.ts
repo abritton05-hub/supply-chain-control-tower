@@ -5,6 +5,7 @@ import {
   canViewInventory,
   canViewTransactions,
 } from '@/lib/auth/roles';
+import { parseScctBarcodePayload, searchTextForScctPayload } from '@/lib/barcodes/scct-payload';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export type GlobalSearchResultType =
@@ -114,8 +115,9 @@ async function searchInventory(
   const { data, error } = await supabase
     .from('inventory')
     .select(
-      'id,item_id,part_number,description,location,site,bin_location,qty_on_hand,is_supply'
+      'id,item_id,part_number,description,location,site,bin_location,qty_on_hand,is_supply,is_active'
     )
+    .eq('is_active', true)
     .or(orIlike(['item_id', 'part_number', 'description', 'location', 'bin_location'], query))
     .order('item_id', { ascending: true })
     .limit(limit);
@@ -142,6 +144,62 @@ async function searchInventory(
         ['bin_location', 'Bin'],
       ]),
       score: scoreFor(row, query, ['item_id', 'part_number', 'description']),
+    } satisfies GlobalSearchResult;
+  });
+}
+
+async function searchInventoryLocation(
+  supabase: SupabaseClient,
+  location: string,
+  bin: string,
+  limit: number
+): Promise<GlobalSearchResult[]> {
+  const normalizedLocation = normalizeQuery(location);
+  const normalizedBin = normalizeQuery(bin);
+
+  if (!normalizedLocation && !normalizedBin) return [];
+
+  let request = supabase
+    .from('inventory')
+    .select(
+      'id,item_id,part_number,description,location,site,bin_location,qty_on_hand,is_supply,is_active'
+    )
+    .eq('is_active', true)
+    .order('item_id', { ascending: true })
+    .limit(limit);
+
+  if (normalizedLocation) {
+    const locationTerm = `%${safeIlikeTerm(normalizedLocation)}%`;
+    request = request.or(`location.ilike.${locationTerm},site.ilike.${locationTerm}`);
+  }
+
+  if (normalizedBin) {
+    request = request.ilike('bin_location', `%${safeIlikeTerm(normalizedBin)}%`);
+  }
+
+  const { data, error } = await request;
+
+  if (error) throw error;
+
+  return ((data ?? []) as Record<string, unknown>[]).map((row) => {
+    const itemId = display(row.item_id, String(row.id));
+    const partNumber = clean(row.part_number);
+    const locationText = [row.site, row.location, row.bin_location]
+      .map(clean)
+      .filter(Boolean)
+      .join(' / ');
+
+    return {
+      id: String(row.id ?? itemId),
+      type: 'inventory',
+      title: partNumber || itemId,
+      subtitle: [display(row.description), locationText]
+        .filter((value) => value !== '-')
+        .join(' | '),
+      href: `/inventory/${encodeParam(itemId)}`,
+      badge: row.is_supply ? 'Supply' : `Qty ${row.qty_on_hand ?? 0}`,
+      matchedField: normalizedBin ? 'Location / Bin' : 'Location',
+      score: 90,
     } satisfies GlobalSearchResult;
   });
 }
@@ -494,7 +552,10 @@ export async function runGlobalSearch(
   rawQuery: string,
   context: SearchContext
 ): Promise<GlobalSearchResult[]> {
-  const query = normalizeQuery(rawQuery);
+  const parsedPayload = parseScctBarcodePayload(rawQuery);
+  const query = normalizeQuery(
+    parsedPayload ? searchTextForScctPayload(parsedPayload) : rawQuery
+  );
 
   if (query.length < 2) {
     return [];
@@ -505,7 +566,15 @@ export async function runGlobalSearch(
   const searches: Array<Promise<GlobalSearchResult[]>> = [];
 
   if (canViewInventory(context.role)) {
-    searches.push(optionalSearch('inventory', () => searchInventory(supabase, query, limit)));
+    if (parsedPayload?.type === 'location') {
+      searches.push(
+        optionalSearch('inventory', () =>
+          searchInventoryLocation(supabase, parsedPayload.location, parsedPayload.bin, limit)
+        )
+      );
+    } else {
+      searches.push(optionalSearch('inventory', () => searchInventory(supabase, query, limit)));
+    }
   }
 
   if (canSubmitPullRequests(context.role)) {

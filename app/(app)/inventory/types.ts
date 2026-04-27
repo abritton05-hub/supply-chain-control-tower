@@ -10,6 +10,7 @@ export type InventoryRecord = {
   qty_on_hand: number | null;
   reorder_point: number | null;
   is_supply?: boolean | null;
+  is_active?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };

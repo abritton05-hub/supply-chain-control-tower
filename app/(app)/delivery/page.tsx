@@ -27,6 +27,18 @@ function activeView(value?: string | string[]): DeliveryView {
   return 'bom';
 }
 
+function selectedString(value?: string | string[]) {
+  return Array.isArray(value) ? value[0] || '' : value || '';
+}
+
+function selectedManifestHistoryFilter(value?: string | string[]) {
+  const rawValue = selectedString(value).toUpperCase();
+
+  if (rawValue === 'COMPLETE' || rawValue === 'COMPLETED') return 'COMPLETE';
+  if (rawValue === 'ALL') return 'ALL';
+  return 'OPEN';
+}
+
 function isMissingStatusColumn(error: unknown) {
   const message = error instanceof Error ? error.message : '';
   return (
@@ -111,7 +123,12 @@ function toHistory(boms: BomHeader[], manifests: ManifestHeader[]): HistoryRecor
   return [...bomRecords, ...manifestRecords].sort((a, b) => sortDate(b.date) - sortDate(a.date));
 }
 
-async function getDeliveryData(view: DeliveryView): Promise<DeliveryPageData> {
+async function getDeliveryData(
+  view: DeliveryView,
+  focusedManifestNumber: string,
+  focusedManifestDate: string,
+  initialManifestHistoryFilter: DeliveryPageData['initialManifestHistoryFilter']
+): Promise<DeliveryPageData> {
   let boms: BomHeader[] = [];
   let manifests: ManifestHeader[] = [];
   let bomError = '';
@@ -135,6 +152,9 @@ async function getDeliveryData(view: DeliveryView): Promise<DeliveryPageData> {
 
   return {
     view,
+    focusedManifestNumber,
+    focusedManifestDate,
+    initialManifestHistoryFilter,
     boms,
     manifests,
     pickups,
@@ -148,7 +168,12 @@ async function getDeliveryData(view: DeliveryView): Promise<DeliveryPageData> {
 export default async function DeliveryPage({
   searchParams,
 }: {
-  searchParams?: { view?: string | string[] };
+  searchParams?: {
+    view?: string | string[];
+    manifest?: string | string[];
+    date?: string | string[];
+    manifestStatus?: string | string[];
+  };
 }) {
   const profile = await getCurrentUserProfile();
 
@@ -157,7 +182,20 @@ export default async function DeliveryPage({
   }
 
   const view = activeView(searchParams?.view);
-  const data = await getDeliveryData(view);
+  const focusedManifestNumber = selectedString(searchParams?.manifest);
+  const focusedManifestDate = selectedString(searchParams?.date);
+  const initialManifestHistoryFilter =
+    focusedManifestNumber
+      ? selectedManifestHistoryFilter(searchParams?.manifestStatus) === 'OPEN'
+        ? 'ALL'
+        : selectedManifestHistoryFilter(searchParams?.manifestStatus)
+      : selectedManifestHistoryFilter(searchParams?.manifestStatus);
+  const data = await getDeliveryData(
+    view,
+    focusedManifestNumber,
+    focusedManifestDate,
+    initialManifestHistoryFilter
+  );
 
   return (
     <ModulePageShell

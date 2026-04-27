@@ -111,6 +111,7 @@ async function ensureReceiptTransactionLocation(
     .from('inventory')
     .select('location,site,bin_location')
     .eq('item_id', itemId)
+    .eq('is_active', true)
     .maybeSingle();
 
   if (inventoryError) {
@@ -144,7 +145,8 @@ async function loadInventoryLookup() {
 
   const { data, error } = await supabase
     .from('inventory')
-    .select('id,item_id,part_number,description,is_supply')
+    .select('id,item_id,part_number,description,is_supply,is_active')
+    .eq('is_active', true)
     .order('item_id', { ascending: true });
 
   if (error) {
@@ -215,9 +217,10 @@ async function resolveSupplyReceipt(
   if (partNumber) {
     const { data: supplyByPart, error: supplyByPartError } = await supabase
       .from('inventory')
-      .select('item_id,part_number,description,is_supply')
+      .select('item_id,part_number,description,is_supply,is_active')
       .eq('part_number', partNumber)
       .eq('is_supply', true)
+      .eq('is_active', true)
       .limit(1)
       .maybeSingle();
 
@@ -238,9 +241,10 @@ async function resolveSupplyReceipt(
   if (description) {
     const { data: supplyByDescription, error: supplyByDescriptionError } = await supabase
       .from('inventory')
-      .select('item_id,part_number,description,is_supply')
+      .select('item_id,part_number,description,is_supply,is_active')
       .eq('description', description)
       .eq('is_supply', true)
+      .eq('is_active', true)
       .limit(1)
       .maybeSingle();
 
@@ -271,6 +275,7 @@ async function resolveSupplyReceipt(
       qty_on_hand: 0,
       reorder_point: 0,
       is_supply: true,
+      is_active: true,
       site: SUPPLY_SITE,
     })
     .select('item_id,part_number,description,is_supply')
@@ -307,8 +312,9 @@ async function resolveStandardReceipt(
   if (!resolvedItemId && resolvedPartNumber) {
     const { data: inventoryMatch, error: inventoryMatchError } = await supabase
       .from('inventory')
-      .select('item_id,part_number,description,is_supply')
+      .select('item_id,part_number,description,is_supply,is_active')
       .eq('part_number', resolvedPartNumber)
+      .eq('is_active', true)
       .limit(1)
       .maybeSingle();
 

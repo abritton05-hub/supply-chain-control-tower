@@ -222,14 +222,16 @@ export default async function PullRequestDetailPage({
     itemIds.length
       ? supabase
           .from('inventory')
-          .select('item_id,part_number,qty_on_hand,location,site,bin_location')
+          .select('item_id,part_number,qty_on_hand,location,site,bin_location,is_active')
           .in('item_id', itemIds)
+          .eq('is_active', true)
       : Promise.resolve({ data: [], error: null }),
     partNumbers.length
       ? supabase
           .from('inventory')
-          .select('item_id,part_number,qty_on_hand,location,site,bin_location')
+          .select('item_id,part_number,qty_on_hand,location,site,bin_location,is_active')
           .in('part_number', partNumbers)
+          .eq('is_active', true)
       : Promise.resolve({ data: [], error: null }),
   ]);
 

@@ -16,6 +16,7 @@ const BOM_START = 13501;
 const DENALI_LOGO_SRC = '/denali-logo.png';
 
 type Direction = 'incoming' | 'outgoing';
+type ManifestStatusFilter = 'OPEN' | 'COMPLETE' | 'ALL';
 
 type ShippingLocation = {
   code: string;
@@ -289,6 +290,40 @@ function stopStatusIsComplete(status: string) {
   return normalized === 'complete' || normalized === 'completed' || normalized === 'closed';
 }
 
+function manifestKey(manifestNumber: string, manifestDate: string) {
+  return `${manifestDate || 'Unassigned'}::${manifestNumber || 'Unassigned'}`;
+}
+
+function manifestRowsAreComplete(rows: StopRow[]) {
+  return rows.length > 0 && rows.every((row) => stopStatusIsComplete(row.status));
+}
+
+function manifestStatusLabel(rows: StopRow[]) {
+  return manifestRowsAreComplete(rows) ? 'Complete' : 'Open';
+}
+
+function displayStopStatus(status: string) {
+  if (stopStatusIsComplete(status)) return 'Complete';
+  return status || '-';
+}
+
+function activeManifestRows(rows: StopRow[]) {
+  const rowsByManifest = new Map<string, StopRow[]>();
+
+  for (const row of rows) {
+    const key = manifestKey(row.manifestNumber, row.date);
+    rowsByManifest.set(key, [...(rowsByManifest.get(key) || []), row]);
+  }
+
+  const completeManifests = new Set(
+    Array.from(rowsByManifest.entries())
+      .filter(([, manifestRows]) => manifestRowsAreComplete(manifestRows))
+      .map(([key]) => key)
+  );
+
+  return rows.filter((row) => !completeManifests.has(manifestKey(row.manifestNumber, row.date)));
+}
+
 function createEmptyStopLine(stopId: string): StopLineItem {
   return {
     id: newId('line'),
@@ -326,10 +361,11 @@ function buildStopLabelPayloads(row: StopRow) {
   const from = displayStopAddress(row.fromLocation, row.fromAddress);
   const to = displayStopAddress(row.toLocation, row.toAddress);
   const direction = formatType(row.direction);
-  const reference =
-    [row.reference, row.shipmentTransferId].map(clean).filter(Boolean).join(' | ') ||
-    row.manifestNumber;
   const location = `${oneLine(from)} to ${oneLine(to)}`;
+  const destinationName = clean(row.toLocation);
+  const destinationAddress = clean(row.toAddress);
+  const contactLine = clean(row.contact);
+  const po = clean(row.shipmentTransferId);
   const payloads: ReturnType<typeof buildShippingManifestLabelPayload>[] = [];
   const lines = validStructuredLines(row.lineItems);
 
@@ -338,16 +374,8 @@ function buildStopLabelPayloads(row: StopRow) {
       const lineBoxCount = parseBoxCount(line.boxCount);
       if (lineBoxCount <= 0) continue;
 
-      const part = itemIdentifier(line) || row.shipmentTransferId || row.reference || row.manifestNumber;
-      const lineDescription = [
-        clean(line.description),
-        direction,
-        `From: ${oneLine(from)}`,
-        `To: ${oneLine(to)}`,
-        clean(line.notes),
-      ]
-        .filter(Boolean)
-        .join(' | ');
+      const part = itemIdentifier(line);
+      const lineDescription = clean(line.description) || clean(line.notes);
 
       for (let boxIndex = 1; boxIndex <= lineBoxCount; boxIndex += 1) {
         for (let labelIndex = 1; labelIndex <= 2; labelIndex += 1) {
@@ -360,8 +388,12 @@ function buildStopLabelPayloads(row: StopRow) {
               description: lineDescription,
               quantity: line.quantity,
               location,
-              reference: `${reference} | ${direction} | Box ${boxIndex}/${lineBoxCount}`,
+              reference: `${row.manifestNumber} / ${direction} / Box ${boxIndex}`,
+              po,
               date: row.date,
+              destinationName,
+              destinationAddress,
+              contactLine,
             })
           );
         }
@@ -373,14 +405,8 @@ function buildStopLabelPayloads(row: StopRow) {
 
   const legacyBoxCount = parseBoxCount(row.boxCount);
   const itemsText = stopItemsText(row);
-  const legacyDescription = [
-    direction,
-    `From: ${oneLine(from)}`,
-    `To: ${oneLine(to)}`,
-    itemsText ? `Items: ${oneLine(itemsText)}` : '',
-  ]
-    .filter(Boolean)
-    .join(' | ');
+  const legacyDescription =
+    oneLine(itemsText) || clean(row.reference) || clean(row.shipmentTransferId) || row.manifestNumber;
 
   for (let boxIndex = 1; boxIndex <= legacyBoxCount; boxIndex += 1) {
     for (let labelIndex = 1; labelIndex <= 2; labelIndex += 1) {
@@ -388,13 +414,17 @@ function buildStopLabelPayloads(row: StopRow) {
         buildShippingManifestLabelPayload({
           manifestNumber: row.manifestNumber,
           stopId: row.id,
-          partNumber: row.shipmentTransferId || row.reference || row.manifestNumber,
+          partNumber: '',
           itemId: `Box ${boxIndex}/${legacyBoxCount} Label ${labelIndex}/2`,
           description: legacyDescription,
           quantity: '1',
           location,
-          reference: `${reference} | ${direction} | Box ${boxIndex}/${legacyBoxCount}`,
+          reference: `${row.manifestNumber} / ${direction} / Box ${boxIndex}`,
+          po,
           date: row.date,
+          destinationName,
+          destinationAddress,
+          contactLine,
         })
       );
     }
@@ -403,7 +433,7 @@ function buildStopLabelPayloads(row: StopRow) {
   return payloads;
 }
 
-function manifestNumberForDate(date: string, rows: StopRow[]) {
+function manifestNumberForDate(date: string, rows: StopRow[], allRows: StopRow[] = rows) {
   const existing = rows
     .filter((row) => row.date === date && row.manifestNumber)
     .sort((a, b) => {
@@ -413,7 +443,7 @@ function manifestNumberForDate(date: string, rows: StopRow[]) {
       return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
     })[0]?.manifestNumber;
 
-  return existing || createManifestNumber(rows.map((row) => row.manifestNumber).filter(Boolean));
+  return existing || createManifestNumber(allRows.map((row) => row.manifestNumber).filter(Boolean));
 }
 
 function rowsForManifest(rows: StopRow[], manifestNumber: string, manifestDate: string) {
@@ -564,6 +594,24 @@ async function saveManifestRow(row: StopRow, method: 'POST' | 'PATCH') {
 
   const data = await res.json();
   if (!data.ok) throw new Error(data.message || 'Failed to save manifest stop.');
+}
+
+async function completeManifest(manifestNumber: string, manifestDate: string) {
+  const res = await fetch('/api/shipping/manifest-history/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      manifest_number: manifestNumber,
+      manifest_date: manifestDate,
+    }),
+  });
+  const data = await res.json();
+
+  if (!data.ok) {
+    throw new Error(data.message || 'Failed to complete manifest.');
+  }
+
+  return data as { stopCount?: number; message?: string };
 }
 
 async function saveBomRow(bom: BomDraft) {
@@ -1291,7 +1339,7 @@ function PrintableManifest({
                   <PrintableItemLines lines={printableStopLines(row)} />
                 </td>
                 <td>{row.contact || '-'}</td>
-                <td>{row.status || '-'}</td>
+                <td>{displayStopStatus(row.status)}</td>
               </tr>
             ))}
           </tbody>
@@ -1339,6 +1387,7 @@ function ManifestModal({
   manifestNumber,
   manifestDate,
   rows,
+  viewOnly,
   onClose,
   onSave,
   onPrint,
@@ -1347,6 +1396,7 @@ function ManifestModal({
   manifestNumber: string;
   manifestDate: string;
   rows: StopRow[];
+  viewOnly: boolean;
   onClose: () => void;
   onSave: () => void;
   onPrint: () => void;
@@ -1370,7 +1420,9 @@ function ManifestModal({
             <div>
               <h2 className="text-2xl font-bold text-slate-950">Manifest {manifestNumber}</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Review every stop for {manifestDate}. Open any stop to edit it.
+                {viewOnly
+                  ? `Review completed stops for ${manifestDate}.`
+                  : `Review every stop for ${manifestDate}. Open any stop to edit it.`}
               </p>
             </div>
           </div>
@@ -1385,16 +1437,18 @@ function ManifestModal({
           </button>
         </div>
 
-        <StopsTable rows={rows} mode="manifest" onOpen={onEditStop} />
+        <StopsTable rows={rows} mode="manifest" onOpen={onEditStop} readOnly={viewOnly} />
 
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <button
-            type="button"
-            onClick={onSave}
-            className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
-          >
-            Save Manifest
-          </button>
+          {!viewOnly ? (
+            <button
+              type="button"
+              onClick={onSave}
+              className="rounded-xl bg-cyan-700 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-800"
+            >
+              Save Manifest
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onPrint}
@@ -1424,6 +1478,7 @@ function StopsTable({
   onPrintLabels,
   onCreateBom,
   onMarkComplete,
+  readOnly = false,
 }: {
   rows: StopRow[];
   mode: 'pickup' | 'dropoff' | 'manifest';
@@ -1432,6 +1487,7 @@ function StopsTable({
   onPrintLabels?: (row: StopRow) => void;
   onCreateBom?: (row: StopRow) => void;
   onMarkComplete?: (row: StopRow) => void;
+  readOnly?: boolean;
 }) {
   const isManifest = mode === 'manifest';
   const primaryAddressLabel = isManifest || mode === 'pickup' ? 'From' : 'To';
@@ -1483,42 +1539,46 @@ function StopsTable({
                   </td>
                   <td className="whitespace-pre-line px-3 py-3">{stopItemsText(row) || '-'}</td>
                   {isManifest ? <td className="px-3 py-3">{row.contact || '-'}</td> : null}
-                  {isManifest ? <td className="px-3 py-3">{row.status || '-'}</td> : null}
+                  {isManifest ? <td className="px-3 py-3">{displayStopStatus(row.status)}</td> : null}
                   <td className="px-3 py-3 text-right">
-                    <div className="erp-row-actions">
-                      <button type="button" onClick={() => onOpen(row)} className="erp-action-primary">
-                        Open
-                      </button>
-                      {onPrintLabels ? (
-                        <button
-                          type="button"
-                          onClick={() => onPrintLabels(row)}
-                          disabled={buildStopLabelPayloads(row).length === 0}
-                          className="erp-action-secondary"
-                        >
-                          Print Labels
+                    {readOnly ? (
+                      <span className="text-xs font-semibold text-slate-500">View-only</span>
+                    ) : (
+                      <div className="erp-row-actions">
+                        <button type="button" onClick={() => onOpen(row)} className="erp-action-primary">
+                          Open
                         </button>
-                      ) : null}
-                      {row.direction === 'outgoing' && onCreateBom ? (
-                        <button
-                          type="button"
-                          onClick={() => onCreateBom(row)}
-                          className="erp-action-secondary"
-                        >
-                          Create BOM
-                        </button>
-                      ) : null}
-                      {onMarkComplete ? (
-                        <button
-                          type="button"
-                          onClick={() => onMarkComplete(row)}
-                          disabled={stopStatusIsComplete(row.status)}
-                          className="erp-action-secondary"
-                        >
-                          {stopStatusIsComplete(row.status) ? 'Complete' : 'Mark Complete'}
-                        </button>
-                      ) : null}
-                    </div>
+                        {onPrintLabels ? (
+                          <button
+                            type="button"
+                            onClick={() => onPrintLabels(row)}
+                            disabled={buildStopLabelPayloads(row).length === 0}
+                            className="erp-action-secondary"
+                          >
+                            Print Labels
+                          </button>
+                        ) : null}
+                        {row.direction === 'outgoing' && onCreateBom ? (
+                          <button
+                            type="button"
+                            onClick={() => onCreateBom(row)}
+                            className="erp-action-secondary"
+                          >
+                            Create BOM
+                          </button>
+                        ) : null}
+                        {onMarkComplete ? (
+                          <button
+                            type="button"
+                            onClick={() => onMarkComplete(row)}
+                            disabled={stopStatusIsComplete(row.status)}
+                            className="erp-action-secondary"
+                          >
+                            {stopStatusIsComplete(row.status) ? 'Complete' : 'Mark Complete'}
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
@@ -1539,12 +1599,20 @@ function StopsTable({
   );
 }
 
-export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
+export function DeliveryClient({
+  canManageDelivery,
+  focusedManifestNumber,
+  focusedManifestDate,
+  initialManifestHistoryFilter,
+}: DeliveryClientProps) {
   const [rows, setRows] = useState<StopRow[]>([]);
   const [locations, setLocations] = useState<ShippingLocation[]>([]);
   const [selectedRow, setSelectedRow] = useState<StopRow | null>(null);
   const [selectedManifestNumber, setSelectedManifestNumber] = useState('');
   const [selectedManifestDate, setSelectedManifestDate] = useState(today());
+  const [manifestHistoryFilter, setManifestHistoryFilter] =
+    useState<ManifestStatusFilter>(initialManifestHistoryFilter);
+  const [initialManifestFocusApplied, setInitialManifestFocusApplied] = useState(false);
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
   const [message, setMessage] = useState('');
   const [loadingLabel, setLoadingLabel] = useState('');
@@ -1576,19 +1644,48 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
     init();
   }, []);
 
-  const selectedDateManifestNumber = manifestNumberForDate(selectedManifestDate, rows);
-  const pickups = rows.filter(
+  useEffect(() => {
+    if (initialManifestFocusApplied || !focusedManifestNumber || !rows.length) return;
+
+    const matchedRow = rows.find(
+      (row) =>
+        row.manifestNumber === focusedManifestNumber &&
+        (!focusedManifestDate || row.date === focusedManifestDate)
+    );
+
+    if (!matchedRow) return;
+
+    setManifestHistoryFilter('ALL');
+    setSelectedManifestDate(matchedRow.date);
+    setSelectedManifestNumber(matchedRow.manifestNumber);
+    setMessage(`Opened manifest ${matchedRow.manifestNumber} from transaction history.`);
+    setInitialManifestFocusApplied(true);
+  }, [
+    focusedManifestDate,
+    focusedManifestNumber,
+    initialManifestFocusApplied,
+    rows,
+  ]);
+
+  const activeRows = useMemo(() => activeManifestRows(rows), [rows]);
+  const selectedDateManifestNumber = manifestNumberForDate(
+    selectedManifestDate,
+    activeRows,
+    rows
+  );
+  const pickups = activeRows.filter(
     (row) => row.date === selectedManifestDate && row.direction === 'incoming'
   );
-  const dropOffs = rows.filter(
+  const dropOffs = activeRows.filter(
     (row) => row.date === selectedManifestDate && row.direction === 'outgoing'
   );
   const selectedDateManifestRows = rowsForManifest(
-    rows,
+    activeRows,
     selectedDateManifestNumber,
     selectedManifestDate
   );
   const selectedManifestRows = rowsForManifest(rows, selectedManifestNumber, selectedManifestDate);
+  const selectedManifestIsComplete = manifestRowsAreComplete(selectedManifestRows);
 
   const groupedByDate = useMemo(() => {
     const dateGroups = new Map<string, Map<string, StopRow[]>>();
@@ -1606,6 +1703,26 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
     );
   }, [rows]);
 
+  const manifestHistoryRows = useMemo(() => {
+    return groupedByDate.flatMap(([date, manifestsMap]) =>
+      Array.from(manifestsMap.entries())
+        .sort((a, b) => parseManifestNumber(b[0]) - parseManifestNumber(a[0]))
+        .filter(([, manifestRows]) => {
+          const isComplete = manifestRowsAreComplete(manifestRows);
+          if (manifestHistoryFilter === 'COMPLETE') return isComplete;
+          if (manifestHistoryFilter === 'OPEN') return !isComplete;
+          return true;
+        })
+        .map(([manifestNumber, manifestRows], index) => ({
+          date,
+          manifestNumber,
+          manifestRows,
+          index,
+          isComplete: manifestRowsAreComplete(manifestRows),
+        }))
+    );
+  }, [groupedByDate, manifestHistoryFilter]);
+
   function changeManifestDate(value: string) {
     setSelectedManifestDate(value);
     setSelectedManifestNumber('');
@@ -1618,8 +1735,14 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
       return;
     }
 
+    const manifestNumber = manifestNumberForDate(selectedManifestDate, activeRows, rows);
+    if (manifestRowsAreComplete(rowsForManifest(rows, manifestNumber, selectedManifestDate))) {
+      setMessage('Completed manifests are view-only from delivery history.');
+      setSelectedRow(null);
+      return;
+    }
+
     try {
-      const manifestNumber = manifestNumberForDate(selectedManifestDate, rows);
       const row = emptyStop(direction, manifestNumber, selectedManifestDate, locations);
 
       setLoadingLabel(`Creating ${formatType(direction)}...`);
@@ -1640,6 +1763,12 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
       return;
     }
 
+    if (manifestRowsAreComplete(rowsForManifest(rows, row.manifestNumber, row.date))) {
+      setMessage('Completed manifests are view-only from delivery history.');
+      setSelectedRow(null);
+      return;
+    }
+
     try {
       const validationErrors = validateStopLineItems(row.lineItems);
       if (validationErrors.length) {
@@ -1649,6 +1778,7 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
       const rowDate = row.date || selectedManifestDate || today();
       const manifestNumber = manifestNumberForDate(
         rowDate,
+        activeRows.filter((existing) => existing.id !== row.id),
         rows.filter((existing) => existing.id !== row.id)
       );
       const boxCount = parseBoxCount(row.boxCount);
@@ -1687,6 +1817,11 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
   async function handleCreateBom(row: StopRow) {
     if (!canManageDelivery) {
       setMessage('Warehouse or admin access is required to create BOMs.');
+      return;
+    }
+
+    if (manifestRowsAreComplete(rowsForManifest(rows, row.manifestNumber, row.date))) {
+      setMessage('Completed manifests are view-only from delivery history.');
       return;
     }
 
@@ -1764,6 +1899,43 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
     }
   }
 
+  async function handleMarkManifestComplete(
+    manifestNumber: string,
+    manifestDate: string,
+    manifestRows: StopRow[]
+  ) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (manifestRowsAreComplete(manifestRows)) return;
+
+    if (
+      !window.confirm(
+        `Mark manifest ${manifestNumber} complete? Completed manifests will move to transaction history.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Completing manifest...');
+      const result = await completeManifest(manifestNumber, manifestDate);
+      await refreshData();
+      setSelectedRow(null);
+      setSelectedManifestNumber('');
+      setMessage(
+        result.message ||
+          `Manifest ${manifestNumber} completed with ${result.stopCount ?? manifestRows.length} stops.`
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not complete manifest.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
   function openManifest(manifestNumber: string, manifestDate: string) {
     setSelectedManifestDate(manifestDate);
     setSelectedManifestNumber(manifestNumber);
@@ -1775,6 +1947,10 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
     if (!selectedManifestNumber) return;
     if (!canManageDelivery) {
       setMessage('Warehouse or admin access is required to save manifests.');
+      return;
+    }
+    if (selectedManifestIsComplete) {
+      setMessage('Completed manifests are view-only from delivery history.');
       return;
     }
 
@@ -1899,7 +2075,28 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-        <h3 className="text-base font-bold text-slate-950">Manifest History</h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h3 className="text-base font-bold text-slate-950">Manifest History</h3>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              Completed manifests move out of active delivery work and remain available here.
+            </p>
+          </div>
+          <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+            Status
+            <select
+              value={manifestHistoryFilter}
+              onChange={(event) =>
+                setManifestHistoryFilter(event.target.value as ManifestStatusFilter)
+              }
+              className="mt-1 block h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold normal-case tracking-normal text-slate-800"
+            >
+              <option value="OPEN">Open</option>
+              <option value="COMPLETE">Completed</option>
+              <option value="ALL">All</option>
+            </select>
+          </label>
+        </div>
         <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
@@ -1911,64 +2108,84 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
-              {groupedByDate.length ? (
-                groupedByDate.flatMap(([date, manifestsMap]) =>
-                  Array.from(manifestsMap.entries())
-                    .sort((a, b) => parseManifestNumber(b[0]) - parseManifestNumber(a[0]))
-                    .map(([manifestNumber, manifestRows], index) => (
-                      <tr key={`${date}-${manifestNumber}`} className="hover:bg-slate-50">
-                        <td className="px-3 py-3 font-bold text-slate-950">
-                          {index === 0 ? (
-                            <div className="mb-2 text-xs font-bold text-slate-500">{date}</div>
-                          ) : null}
-                          {manifestNumber}
-                        </td>
-                        <td className="px-3 py-3">{manifestRows.length}</td>
-                        <td className="px-3 py-3">Open</td>
-                        <td className="px-3 py-3 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openManifest(manifestNumber, date)}
-                              className="erp-action-primary"
-                            >
-                              Open
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                printElementById(`print-manifest-history-${date}-${manifestNumber}`)
-                              }
-                              className="erp-action-secondary"
-                            >
-                              Print
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePrintManifestLabels(manifestNumber, manifestRows)}
-                              disabled={manifestRows.flatMap(buildStopLabelPayloads).length === 0}
-                              className="erp-action-secondary"
-                            >
-                              Print Labels
-                            </button>
-                          </div>
+              {manifestHistoryRows.length ? (
+                manifestHistoryRows.map(({ date, manifestNumber, manifestRows, index, isComplete }) => (
+                  <tr key={`${date}-${manifestNumber}`} className="hover:bg-slate-50">
+                    <td className="px-3 py-3 font-bold text-slate-950">
+                      {index === 0 ? (
+                        <div className="mb-2 text-xs font-bold text-slate-500">{date}</div>
+                      ) : null}
+                      {manifestNumber}
+                    </td>
+                    <td className="px-3 py-3">{manifestRows.length}</td>
+                    <td className="px-3 py-3">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold ${
+                          isComplete
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-cyan-200 bg-cyan-50 text-cyan-700'
+                        }`}
+                      >
+                        {manifestStatusLabel(manifestRows)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openManifest(manifestNumber, date)}
+                          className={isComplete ? 'erp-action-secondary' : 'erp-action-primary'}
+                        >
+                          {isComplete ? 'View' : 'Open'}
+                        </button>
+                        {!isComplete ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleMarkManifestComplete(manifestNumber, date, manifestRows)
+                            }
+                            className="erp-action-secondary"
+                          >
+                            Complete
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            printElementById(`print-manifest-history-${date}-${manifestNumber}`)
+                          }
+                          className="erp-action-secondary"
+                        >
+                          Print
+                        </button>
+                        {!isComplete ? (
+                          <button
+                            type="button"
+                            onClick={() => handlePrintManifestLabels(manifestNumber, manifestRows)}
+                            disabled={manifestRows.flatMap(buildStopLabelPayloads).length === 0}
+                            className="erp-action-secondary"
+                          >
+                            Print Labels
+                          </button>
+                        ) : null}
+                      </div>
 
-                          <PrintableManifest
-                            manifestNumber={manifestNumber}
-                            manifestDate={date}
-                            printId={`print-manifest-history-${date}-${manifestNumber}`}
-                            rows={manifestRows.filter(
-                              (row) => row.manifestNumber === manifestNumber && row.date === date
-                            )}
-                          />
-                        </td>
-                      </tr>
-                    ))
-                )
+                      <PrintableManifest
+                        manifestNumber={manifestNumber}
+                        manifestDate={date}
+                        printId={`print-manifest-history-${date}-${manifestNumber}`}
+                        rows={manifestRows.filter(
+                          (row) => row.manifestNumber === manifestNumber && row.date === date
+                        )}
+                      />
+                    </td>
+                  </tr>
+                ))
               ) : (
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
-                    No manifest history yet.
+                    No {manifestHistoryFilter === 'OPEN' ? 'open' : manifestHistoryFilter.toLowerCase()}{' '}
+                    manifest history found.
                   </td>
                 </tr>
               )}
@@ -2033,6 +2250,7 @@ export function DeliveryClient({ canManageDelivery }: DeliveryClientProps) {
         manifestNumber={selectedManifestNumber}
         manifestDate={selectedManifestDate}
         rows={selectedManifestRows}
+        viewOnly={selectedManifestIsComplete}
         onClose={() => setSelectedManifestNumber('')}
         onSave={saveSelectedManifest}
         onPrint={() =>

@@ -20,15 +20,6 @@ function isMissingResolutionColumn(error: { code?: string; message?: string }) {
   return error.code === '42703' || message.includes('resolved_by') || message.includes('resolved_at');
 }
 
-function isMissingFulfillmentColumn(error: { code?: string; message?: string }) {
-  const message = error.message?.toLowerCase() ?? '';
-  return (
-    error.code === '42703' ||
-    message.includes('quantity_fulfilled') ||
-    message.includes('fulfillment_status')
-  );
-}
-
 export async function PATCH(
   request: Request,
   {
@@ -89,42 +80,6 @@ export async function PATCH(
         message: 'Pull request was already closed.',
         request: existing,
       });
-    }
-
-    const { data: lineData, error: lineError } = await supabase
-      .from('pull_request_lines')
-      .select('quantity,quantity_fulfilled')
-      .eq('request_id', requestId);
-
-    if (lineError && !isMissingFulfillmentColumn(lineError)) {
-      return NextResponse.json({ ok: false, message: lineError.message }, { status: 500 });
-    }
-
-    if (lineError && isMissingFulfillmentColumn(lineError)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            'Pull request fulfillment fields are required before closing from quick actions.',
-        },
-        { status: 400 }
-      );
-    }
-
-    const hasOpenQuantity = (lineData ?? []).some((line) => {
-      const requested = Number(line.quantity) || 0;
-      const fulfilled = Number(line.quantity_fulfilled) || 0;
-      return requested > fulfilled;
-    });
-
-    if (hasOpenQuantity) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: 'Only fully fulfilled pull requests can be closed.',
-        },
-        { status: 400 }
-      );
     }
 
     const updatePayload = {

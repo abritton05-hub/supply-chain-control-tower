@@ -1,18 +1,25 @@
--- Transaction/audit logging support.
+-- Manifest completion workflow support.
 --
--- The app now writes operational audit entries into inventory_transactions so
--- the existing Transactions page can show one chronological feed. Older
--- inventory-only schemas may have NOT NULL constraints on item-specific fields
--- or a narrow transaction_type check constraint; this migration widens that
--- table without changing the receiving RPC contract.
+-- Manifest stops are stored as rows in shipping_manifest_history. Completing a
+-- manifest marks every stop for the manifest/date complete, keeps the rows for
+-- history and printing, and records the operation in inventory_transactions.
 
-alter table if exists public.inventory_transactions
-  alter column item_id drop not null,
-  alter column part_number drop not null,
-  alter column description drop not null,
-  alter column quantity drop not null,
-  alter column from_location drop not null,
-  alter column to_location drop not null;
+alter table if exists public.shipping_manifest_history
+  add column if not exists status text;
+
+update public.shipping_manifest_history
+set status = 'OPEN'
+where status is null;
+
+alter table if exists public.shipping_manifest_history
+  alter column status set default 'OPEN';
+
+alter table if exists public.shipping_manifest_history
+  add column if not exists completed_at timestamptz,
+  add column if not exists completed_by text;
+
+create index if not exists shipping_manifest_history_manifest_date_status_idx
+  on public.shipping_manifest_history(manifest_number, stop_date, status);
 
 do $$
 declare

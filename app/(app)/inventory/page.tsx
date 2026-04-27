@@ -10,7 +10,15 @@ import type { InventoryRecord } from './types';
 
 export const dynamic = 'force-dynamic';
 
-export default async function InventoryPage() {
+function singleSearchParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function InventoryPage({
+  searchParams,
+}: {
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
   noStore();
 
   const profile = await getCurrentUserProfile();
@@ -24,8 +32,9 @@ export default async function InventoryPage() {
   const { data, error } = await supabase
     .from('inventory')
     .select(
-      'id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,created_at,updated_at,is_supply'
+      'id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,created_at,updated_at,is_supply,is_active'
     )
+    .eq('is_active', true)
     .order('item_id', { ascending: true });
 
   const inventory = (data ?? []) as InventoryRecord[];
@@ -66,7 +75,13 @@ export default async function InventoryPage() {
           </p>
         </div>
       ) : (
-        <InventoryClient inventory={inventory} canEditInventory={canEditInventory(profile.role)} />
+        <InventoryClient
+          inventory={inventory}
+          canEditInventory={canEditInventory(profile.role)}
+          initialQuery={singleSearchParam(searchParams?.search)}
+          initialLocation={singleSearchParam(searchParams?.location)}
+          initialBin={singleSearchParam(searchParams?.bin)}
+        />
       )}
     </div>
   );

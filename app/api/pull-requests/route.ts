@@ -1,6 +1,7 @@
+import { revalidatePath } from 'next/cache';
 import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canSubmitPullRequests } from '@/lib/auth/roles';
+import { canFulfillPullRequests, canSubmitPullRequests } from '@/lib/auth/roles';
 import { getCurrentUserEmail } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { logTransaction } from '@/lib/transactions/log-transaction';
@@ -31,6 +32,12 @@ type PullRequestInput = {
   lines?: PullRequestLineInput[];
 };
 
+type ClosePullRequestsInput = {
+  status?: string;
+  request_ids?: string[];
+  notes?: string;
+};
+
 type NotificationError = {
   message: string;
   code?: string;
@@ -54,6 +61,24 @@ function normalizeLine(line: PullRequestLineInput) {
 
 function pullRequestReference(requestNumber: string | null | undefined, line: { part_number?: string | null; item_id?: string | null }) {
   return [requestNumber, line.part_number || line.item_id].filter(Boolean).join(' | ');
+}
+
+function isClosedStatus(status: string | null | undefined) {
+  const normalized = clean(status).toUpperCase();
+  return normalized === 'CLOSED' || normalized === 'COMPLETED';
+}
+
+function isMissingResolutionColumn(error: { code?: string; message?: string }) {
+  const message = error.message?.toLowerCase() ?? '';
+  return error.code === '42703' || message.includes('resolved_by') || message.includes('resolved_at');
+}
+
+function uniqueRequestIds(values: unknown) {
+  if (!Array.isArray(values)) return [];
+
+  return Array.from(
+    new Set(values.map((value) => (typeof value === 'string' ? clean(value) : '')).filter(Boolean))
+  );
 }
 
 async function createPullRequestNotification(
@@ -400,6 +425,138 @@ export async function POST(request: Request) {
       {
         ok: false,
         message: error instanceof Error ? error.message : 'Failed to submit pull request.',
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const profile = await getCurrentUserProfile();
+
+    if (!canFulfillPullRequests(profile.role)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: 'Only warehouse and admin users can close pull requests.',
+        },
+        { status: 403 }
+      );
+    }
+
+    const body = (await request.json()) as ClosePullRequestsInput;
+    const nextStatus = clean(body.status).toUpperCase();
+
+    if (nextStatus !== 'CLOSED') {
+      return NextResponse.json(
+        { ok: false, message: 'Only CLOSED status updates are supported here.' },
+        { status: 400 }
+      );
+    }
+
+    const supabase = await supabaseAdmin();
+    const currentUserEmail = await getCurrentUserEmail();
+    const performedBy = profile.email || currentUserEmail || 'unknown';
+    const requestedIds = uniqueRequestIds(body.request_ids);
+
+    const { data: existingRows, error: existingError } =
+      requestedIds.length > 0
+        ? await supabase.from('pull_requests').select('id,request_number,status').in('id', requestedIds)
+        : await supabase.from('pull_requests').select('id,request_number,status');
+
+    if (existingError) {
+      return NextResponse.json({ ok: false, message: existingError.message }, { status: 500 });
+    }
+
+    const candidates = (existingRows ?? []).filter((row) => !isClosedStatus(row.status));
+
+    if (candidates.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        message: 'No open pull requests to close.',
+        closedCount: 0,
+      });
+    }
+
+    const candidateIds = candidates.map((row) => row.id);
+    const previousStatusById = new Map(candidates.map((row) => [row.id, row.status]));
+    const updatePayload = {
+      status: 'CLOSED',
+      resolved_by: performedBy,
+      resolved_at: new Date().toISOString(),
+    };
+
+    let updateResult = await supabase
+      .from('pull_requests')
+      .update(updatePayload)
+      .in('id', candidateIds)
+      .select('id,request_number,status');
+
+    if (updateResult.error && isMissingResolutionColumn(updateResult.error)) {
+      updateResult = await supabase
+        .from('pull_requests')
+        .update({ status: 'CLOSED' })
+        .in('id', candidateIds)
+        .select('id,request_number,status');
+    }
+
+    if (updateResult.error) {
+      return NextResponse.json(
+        { ok: false, message: updateResult.error.message || 'Failed to close pull requests.' },
+        { status: 500 }
+      );
+    }
+
+    const closedRows = updateResult.data ?? [];
+    const logErrors: string[] = [];
+
+    for (const row of closedRows) {
+      const reference = row.request_number || row.id;
+      const logResult = await logTransaction({
+        transaction_type: 'PULL_REQUEST_CLOSED',
+        reference,
+        notes: clean(body.notes) || `Pull request ${reference} closed.`,
+        performed_by: performedBy,
+        entity_type: 'pull_request',
+        entity_id: row.id,
+        title: `Pull request ${reference} closed`,
+        details: {
+          request_id: row.id,
+          request_number: row.request_number,
+          previous_status: previousStatusById.get(row.id) ?? null,
+          next_status: row.status,
+        },
+        write_inventory_transaction: true,
+        write_activity_log: true,
+        supabase,
+      });
+
+      if (logResult.ok === false) {
+        logErrors.push(`${row.id}: ${logResult.message}`);
+      }
+    }
+
+    if (logErrors.length) {
+      console.error('Bulk pull request close transaction logging failed', {
+        errors: logErrors,
+      });
+    }
+
+    revalidatePath('/pull-requests');
+    revalidatePath('/transactions');
+    revalidatePath('/dashboard');
+
+    return NextResponse.json({
+      ok: true,
+      message: `Closed ${closedRows.length} pull request${closedRows.length === 1 ? '' : 's'}.`,
+      closedCount: closedRows.length,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Failed to close pull requests.',
       },
       { status: 500 }
     );

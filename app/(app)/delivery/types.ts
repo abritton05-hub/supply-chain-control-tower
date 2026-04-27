@@ -36,6 +36,9 @@ export type HistoryRecord = {
 
 export type DeliveryPageData = {
   view: DeliveryView;
+  focusedManifestNumber: string;
+  focusedManifestDate: string;
+  initialManifestHistoryFilter: 'OPEN' | 'COMPLETE' | 'ALL';
   boms: BomHeader[];
   manifests: ManifestHeader[];
   pickups: ManifestHeader[];

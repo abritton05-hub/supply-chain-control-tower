@@ -1,13 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PrintInventoryTagButton, PrintLocationLabelButton } from '@/components/label-print-buttons';
 import { ScanCameraButton } from '@/components/scan-camera-button';
+import { parseScctBarcodePayload } from '@/lib/barcodes/scct-payload';
 import type { InventoryRecord } from './types';
 
 type Props = {
   inventory: InventoryRecord[];
   canEditInventory: boolean;
+  initialQuery?: string;
+  initialLocation?: string;
+  initialBin?: string;
 };
 
 type CountCapture = {
@@ -70,9 +76,16 @@ function findExactInventory(inventory: InventoryRecord[], value: string) {
   });
 }
 
-export function InventoryClient({ inventory, canEditInventory: canEdit }: Props) {
-  const [query, setQuery] = useState('');
-  const [activeSite, setActiveSite] = useState('SEA991');
+export function InventoryClient({
+  inventory,
+  canEditInventory: canEdit,
+  initialQuery = '',
+  initialLocation = '',
+  initialBin = '',
+}: Props) {
+  const router = useRouter();
+  const [query, setQuery] = useState(initialQuery || initialBin);
+  const [activeSite, setActiveSite] = useState(normalizeSite(initialLocation || 'SEA991'));
   const [countItem, setCountItem] = useState<InventoryRecord | null>(null);
   const [countQty, setCountQty] = useState(0);
   const [countCaptures, setCountCaptures] = useState<CountCapture[]>([]);
@@ -85,6 +98,11 @@ export function InventoryClient({ inventory, canEditInventory: canEdit }: Props)
   const [quickAdjustReason, setQuickAdjustReason] = useState('');
   const [quickAdjustMessage, setQuickAdjustMessage] = useState('');
   const [quickAdjustPending, setQuickAdjustPending] = useState(false);
+
+  useEffect(() => {
+    setQuery(initialQuery || initialBin);
+    setActiveSite(normalizeSite(initialLocation || 'SEA991'));
+  }, [initialBin, initialLocation, initialQuery]);
 
   const inventoryOnly = useMemo(
     () => inventory.filter((item) => !(item.is_supply ?? false)),
@@ -128,6 +146,41 @@ export function InventoryClient({ inventory, canEditInventory: canEdit }: Props)
       const scanned = value.trim();
       if (!scanned) return;
 
+      const parsedPayload = parseScctBarcodePayload(scanned);
+
+      if (parsedPayload?.type === 'inventory') {
+        if (parsedPayload.itemId) {
+          setQuery('');
+          setCountItem(null);
+          router.push(`/inventory/${encodeURIComponent(parsedPayload.itemId)}`);
+          return;
+        }
+
+        if (parsedPayload.partNumber) {
+          setQuery(parsedPayload.partNumber);
+          setCountItem(null);
+          setCountQty(0);
+          setCountMessage(`Searching for part number ${parsedPayload.partNumber}.`);
+          return;
+        }
+      }
+
+      if (parsedPayload?.type === 'location') {
+        if (parsedPayload.location) {
+          setActiveSite(normalizeSite(parsedPayload.location));
+        }
+
+        setQuery(parsedPayload.bin || '');
+        setCountItem(null);
+        setCountQty(0);
+        setCountMessage(
+          parsedPayload.bin
+            ? `Filtering inventory for ${parsedPayload.location || activeSite} / ${parsedPayload.bin}.`
+            : `Filtering inventory for ${parsedPayload.location || activeSite}.`
+        );
+        return;
+      }
+
       setQuery(scanned);
       const match = findExactInventory(inventoryOnly, scanned);
 
@@ -142,7 +195,7 @@ export function InventoryClient({ inventory, canEditInventory: canEdit }: Props)
         setCountMessage('No exact match yet. Review the search results below.');
       }
     },
-    [inventoryOnly]
+    [activeSite, inventoryOnly, router]
   );
 
   function captureCount() {
@@ -255,7 +308,7 @@ export function InventoryClient({ inventory, canEditInventory: canEdit }: Props)
                 }
               }}
               className="w-full rounded-md border border-slate-300 px-3 py-3 text-base lg:py-2 lg:text-sm"
-              placeholder="Scan item ID, part number, bin, location, or type to search"
+              placeholder="Search or scan item/location..."
             />
             <p className="mt-2 text-xs text-slate-500">
               Keyboard scanners work here as plain text. Exact scans prepare the count workflow.
@@ -291,22 +344,26 @@ export function InventoryClient({ inventory, canEditInventory: canEdit }: Props)
       </div>
 
       <div className="erp-panel p-3">
-        <div className="flex flex-wrap gap-2">
-          {LOCATION_TABS.map((site) => (
-            <button
-              key={site}
-              type="button"
-              onClick={() => setActiveSite(site)}
-              className={`rounded-md px-4 py-2 text-sm font-semibold ${
-                activeSite === site
-                  ? 'bg-cyan-700 text-white'
-                  : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {site}
-              <span className="ml-2 text-xs opacity-80">{siteCounts.get(site) || 0}</span>
-            </button>
-          ))}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {LOCATION_TABS.map((site) => (
+              <button
+                key={site}
+                type="button"
+                onClick={() => setActiveSite(site)}
+                className={`rounded-md px-4 py-2 text-sm font-semibold ${
+                  activeSite === site
+                    ? 'bg-cyan-700 text-white'
+                    : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                {site}
+                <span className="ml-2 text-xs opacity-80">{siteCounts.get(site) || 0}</span>
+              </button>
+            ))}
+          </div>
+
+          <PrintLocationLabelButton location={activeSite} />
         </div>
       </div>
 
@@ -419,13 +476,24 @@ export function InventoryClient({ inventory, canEditInventory: canEdit }: Props)
                   </div>
                 </div>
 
-                <div className="mt-4">
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                   <Link
                     href={`/inventory/${item.item_id}`}
-                    className="erp-action-primary inline-flex w-full justify-center"
+                    className="erp-action-primary inline-flex w-full justify-center sm:w-auto"
                   >
                     Open
                   </Link>
+                  <PrintInventoryTagButton
+                    item={item}
+                    className="erp-action-secondary w-full sm:w-auto"
+                    showMessage={false}
+                  />
+                  <PrintLocationLabelButton
+                    location={normalizeSite(item.site || item.location)}
+                    binLocation={item.bin_location}
+                    className="erp-action-secondary w-full sm:w-auto"
+                    showMessage={false}
+                  />
                 </div>
               </article>
             );
@@ -498,6 +566,17 @@ export function InventoryClient({ inventory, canEditInventory: canEdit }: Props)
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="erp-row-actions">
+                          <PrintInventoryTagButton
+                            item={item}
+                            className="erp-action-secondary"
+                            showMessage={false}
+                          />
+                          <PrintLocationLabelButton
+                            location={normalizeSite(item.site || item.location)}
+                            binLocation={item.bin_location}
+                            className="erp-action-secondary"
+                            showMessage={false}
+                          />
                           <Link href={`/inventory/${item.item_id}`} className="erp-action-primary">
                             Open
                           </Link>

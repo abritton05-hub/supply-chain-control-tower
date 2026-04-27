@@ -64,3 +64,7 @@ export function canViewTransactions(role: AppRole | null | undefined) {
 export function canEditInventory(role: AppRole | null | undefined) {
   return role === 'warehouse' || role === 'admin';
 }
+
+export function canDeleteInventory(role: AppRole | null | undefined) {
+  return isAdmin(role);
+}

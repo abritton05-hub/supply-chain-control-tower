@@ -4,11 +4,12 @@ import { notFound, redirect } from 'next/navigation';
 import { SectionHeader } from '@/components/section-header';
 import { RelatedAlerts } from '@/components/related-alerts';
 import { StickyNotes } from '@/components/sticky-notes';
+import { PrintInventoryTagButton, PrintLocationLabelButton } from '@/components/label-print-buttons';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canViewInventory } from '@/lib/auth/roles';
+import { canDeleteInventory, canViewInventory } from '@/lib/auth/roles';
 import { supabaseServer } from '@/lib/supabase/server';
 import type { InventoryRecord } from '../types';
-import { PrintInventoryTagButton } from './print-inventory-tag-button';
+import { ArchiveInventoryItemButton } from './delete-inventory-item-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,9 +94,10 @@ export default async function InventoryItemPage({
   const { data, error } = await supabase
     .from('inventory')
     .select(
-      'id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,created_at,updated_at,is_supply'
+      'id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,created_at,updated_at,is_supply,is_active'
     )
     .eq('item_id', itemId)
+    .eq('is_active', true)
     .maybeSingle();
 
   if (error) {
@@ -110,6 +112,8 @@ export default async function InventoryItemPage({
   const status = stockStatus(item);
   const title = item.part_number || item.item_id;
   const location = [item.site || item.location, item.bin_location].filter(Boolean).join(' / ');
+  const labelLocation = item.site || item.location;
+  const hasLocationLabel = Boolean(labelLocation || item.bin_location);
 
   return (
     <div className="space-y-4">
@@ -119,6 +123,15 @@ export default async function InventoryItemPage({
         actions={
           <>
             <PrintInventoryTagButton item={item} />
+            {hasLocationLabel ? (
+              <PrintLocationLabelButton
+                location={labelLocation}
+                binLocation={item.bin_location}
+              />
+            ) : null}
+            {canDeleteInventory(profile.role) ? (
+              <ArchiveInventoryItemButton itemId={item.item_id} label={title} />
+            ) : null}
             <Link href="/inventory" className="erp-button">
               Back to Inventory
             </Link>

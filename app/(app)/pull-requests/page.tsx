@@ -26,7 +26,8 @@ export default async function PullRequestsPage({
 
   const { data, error } = await supabase
     .from('inventory')
-    .select('id,item_id,part_number,description,category,location,qty_on_hand,reorder_point')
+    .select('id,item_id,part_number,description,category,location,qty_on_hand,reorder_point,is_active')
+    .eq('is_active', true)
     .order('item_id', { ascending: true });
 
   const inventory = (data ?? []) as InventoryRecord[];

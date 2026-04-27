@@ -53,6 +53,7 @@ type PullRequestApiResponse = {
 type ClosePullRequestResponse = {
   ok: boolean;
   message?: string;
+  closedCount?: number;
 };
 
 type TabKey = 'request' | 'requested';
@@ -129,9 +130,8 @@ function normalizedRequestStatus(request: SavedPullRequest) {
 
 function canCloseRequest(request: SavedPullRequest) {
   const status = normalizedRequestStatus(request);
-  const { requested, remaining } = requestFulfillmentSummary(request);
 
-  return status !== 'CLOSED' && requested > 0 && remaining === 0;
+  return status !== 'CLOSED' && status !== 'COMPLETED';
 }
 
 export function PullRequestClient({
@@ -158,6 +158,7 @@ export function PullRequestClient({
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [actionMessage, setActionMessage] = useState('');
   const [closingRequestId, setClosingRequestId] = useState('');
+  const [isClosingAll, setIsClosingAll] = useState(false);
 
   useEffect(() => {
     const query = initialItemQuery.trim();
@@ -332,6 +333,11 @@ export function PullRequestClient({
     });
   }, [savedRequests, requestSearch, requestorFilter, statusFilter, partFilter]);
 
+  const openRequestCount = useMemo(
+    () => savedRequests.filter((request) => canCloseRequest(request)).length,
+    [savedRequests]
+  );
+
   function selectItem(item: InventoryRecord) {
     setSelectedItemId(item.id);
     setSearch(`${item.part_number || item.item_id} ${item.description}`.trim());
@@ -444,12 +450,16 @@ export function PullRequestClient({
     }
 
     if (!canCloseRequest(request)) {
-      setActionMessage('Only fully fulfilled pull requests can be closed from the log.');
+      setActionMessage('This pull request is already closed.');
       return;
     }
 
     const requestLabel = request.request_number || request.id;
-    if (!window.confirm(`Close pull request ${requestLabel}? This keeps fulfillment history intact.`)) {
+    if (
+      !window.confirm(
+        `Close pull request ${requestLabel}? Any unfulfilled quantities will remain in the history.`
+      )
+    ) {
       return;
     }
 
@@ -475,6 +485,52 @@ export function PullRequestClient({
       setActionMessage(error instanceof Error ? error.message : 'Pull request could not be closed.');
     } finally {
       setClosingRequestId('');
+    }
+  }
+
+  async function closeAllRequests() {
+    if (!canFulfillRequests) {
+      setActionMessage('Warehouse or admin access is required to close pull requests.');
+      return;
+    }
+
+    if (openRequestCount === 0) {
+      setActionMessage('There are no open pull requests to close.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Close all ${openRequestCount} open pull request${
+          openRequestCount === 1 ? '' : 's'
+        }? Any unfulfilled quantities will remain in the history.`
+      )
+    ) {
+      return;
+    }
+
+    setIsClosingAll(true);
+    setActionMessage('');
+
+    try {
+      const response = await fetch('/api/pull-requests', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CLOSED' }),
+      });
+      const result = (await response.json()) as ClosePullRequestResponse;
+
+      if (!response.ok || !result.ok) {
+        setActionMessage(result.message || 'Pull requests could not be closed.');
+        return;
+      }
+
+      setActionMessage(result.message || 'Pull requests closed.');
+      await loadSavedRequests();
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : 'Pull requests could not be closed.');
+    } finally {
+      setIsClosingAll(false);
     }
   }
 
@@ -724,6 +780,16 @@ export function PullRequestClient({
               <p className="mt-1 text-sm text-slate-500">
                 Search and filter the requested parts log.
               </p>
+              {canFulfillRequests ? (
+                <button
+                  type="button"
+                  onClick={closeAllRequests}
+                  disabled={isClosingAll || savedRequestsLoading || openRequestCount === 0}
+                  className="mt-3 rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isClosingAll ? 'Closing all...' : `Close All Open (${openRequestCount})`}
+                </button>
+              ) : null}
             </div>
 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -791,8 +857,8 @@ export function PullRequestClient({
               <div className="space-y-3">
                 {filteredSavedRequests.map((request) => {
                   const status = normalizedRequestStatus(request);
-                  const summary = requestFulfillmentSummary(request);
                   const closeAllowed = canFulfillRequests && canCloseRequest(request);
+                  const summary = requestFulfillmentSummary(request);
 
                   return (
                   <div key={request.id} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
@@ -839,8 +905,8 @@ export function PullRequestClient({
                                 className="erp-action-danger"
                                 title={
                                   closeAllowed
-                                    ? 'Close this fulfilled pull request'
-                                    : 'Close is available after all lines are fulfilled'
+                                    ? 'Close this pull request'
+                                    : 'This pull request is already closed'
                                 }
                               >
                                 {closingRequestId === request.id ? 'Closing...' : 'Close'}

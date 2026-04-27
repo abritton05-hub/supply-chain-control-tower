@@ -436,10 +436,10 @@ async function inventoryAlerts(
   const rows = await safeSelect(
     supabase,
     'inventory',
-    'id,item_id,part_number,description,qty_on_hand,reorder_point,location,site,bin_location,created_at,updated_at'
+    'id,item_id,part_number,description,qty_on_hand,reorder_point,location,site,bin_location,is_active,created_at,updated_at'
   );
 
-  return rows.flatMap((row) => {
+  return rows.filter((row) => readBoolean(row, ['is_active']) !== false).flatMap((row) => {
     const id = readString(row, ['id']);
     const itemId = readString(row, ['item_id']);
     const partNumber = readString(row, ['part_number']);

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
-import { canEditInventory } from '@/lib/auth/roles';
+import { canDeleteInventory, canEditInventory } from '@/lib/auth/roles';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { logTransaction } from '@/lib/transactions/log-transaction';
 import type { ImportActionResult } from '@/lib/import-workflow/types';
@@ -27,6 +27,7 @@ type ExistingInventoryMatch = {
   qty_on_hand: number | null;
   reorder_point: number | null;
   is_supply: boolean | null;
+  is_active?: boolean | null;
 };
 
 type InventoryPayload = {
@@ -40,6 +41,7 @@ type InventoryPayload = {
   qty_on_hand: number;
   reorder_point: number;
   is_supply: boolean;
+  is_active: boolean;
 };
 
 type SupabaseActionError = {
@@ -86,6 +88,14 @@ async function requireInventoryWriteAccess() {
 
   if (!canEditInventory(profile.role)) {
     throw new Error('You do not have permission to modify inventory.');
+  }
+}
+
+async function requireInventoryDeleteAccess() {
+  const profile = await getCurrentUserProfile();
+
+  if (!canDeleteInventory(profile.role)) {
+    throw new Error('Only admins can delete inventory items.');
   }
 }
 
@@ -138,10 +148,272 @@ function inventoryPlace(site: string | null | undefined, binLocation: string | n
   return [cleanInventoryText(site), cleanInventoryText(binLocation)].filter(Boolean).join(' / ') || null;
 }
 
+type ReferenceCheck = {
+  label: string;
+  count: number;
+};
+
+type ReferenceCheckResult = {
+  references: ReferenceCheck[];
+  skippedMessages: string[];
+};
+
+const REFERENCE_CHECK_TIMEOUT_MS = 1500;
+
+function isMissingOptionalReference(error: SupabaseActionError) {
+  const rawMessage = [error.message, error.details, error.hint, error.code]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    error.code === '42P01' ||
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
+    error.code === 'PGRST205' ||
+    rawMessage.includes('relation') ||
+    rawMessage.includes('does not exist') ||
+    rawMessage.includes('column') ||
+    rawMessage.includes('schema cache') ||
+    rawMessage.includes('Could not find the table')
+  );
+}
+
+function isAbortedReferenceCheck(error: SupabaseActionError) {
+  const rawMessage = [error.message, error.details, error.hint, error.code]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return rawMessage.includes('abort') || rawMessage.includes('timeout');
+}
+
+function referenceAbortSignal() {
+  if (typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(REFERENCE_CHECK_TIMEOUT_MS);
+  }
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), REFERENCE_CHECK_TIMEOUT_MS);
+  return controller.signal;
+}
+
+function referenceSkipMessage(label: string, error: SupabaseActionError) {
+  if (isMissingOptionalReference(error)) {
+    return `Reference check skipped because ${label} table is not installed.`;
+  }
+
+  if (isAbortedReferenceCheck(error)) {
+    return `Reference check skipped because ${label} did not respond in time.`;
+  }
+
+  return `Reference check skipped because ${label} could not be checked.`;
+}
+
+async function countExactReference(input: {
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>;
+  table: string;
+  label: string;
+  column: string;
+  value: string | null | undefined;
+  optional?: boolean;
+}) {
+  const value = cleanInventoryText(input.value);
+
+  if (!value) return { count: 0, skippedMessage: null };
+
+  let query = input.supabase
+    .from(input.table)
+    .select('id')
+    .eq(input.column, value)
+    .limit(1);
+
+  query = query.abortSignal(referenceAbortSignal());
+
+  const { data, error } = await query;
+
+  if (error) {
+    if (input.optional) {
+      const skippedMessage = referenceSkipMessage(input.label, error);
+      console.warn(`Skipping optional inventory reference check for ${input.table}.${input.column}.`, {
+        message: error.message,
+      });
+      return { count: 0, skippedMessage };
+    }
+
+    console.warn(`Skipping inventory reference check for ${input.table}.${input.column}.`, {
+      message: error.message,
+    });
+    return {
+      count: 0,
+      skippedMessage: referenceSkipMessage(input.label, error),
+    };
+  }
+
+  return { count: data && data.length > 0 ? 1 : 0, skippedMessage: null };
+}
+
+async function countTextReference(input: {
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>;
+  table: string;
+  label: string;
+  column: string;
+  value: string | null | undefined;
+  optional?: boolean;
+}) {
+  const value = cleanInventoryText(input.value);
+
+  if (!value) return { count: 0, skippedMessage: null };
+
+  let query = input.supabase
+    .from(input.table)
+    .select('id')
+    .ilike(input.column, `%${value}%`)
+    .limit(1);
+
+  query = query.abortSignal(referenceAbortSignal());
+
+  const { data, error } = await query;
+
+  if (error) {
+    if (input.optional) {
+      const skippedMessage = referenceSkipMessage(input.label, error);
+      console.warn(`Skipping optional inventory reference check for ${input.table}.${input.column}.`, {
+        message: error.message,
+      });
+      return { count: 0, skippedMessage };
+    }
+
+    console.warn(`Skipping inventory reference check for ${input.table}.${input.column}.`, {
+      message: error.message,
+    });
+    return {
+      count: 0,
+      skippedMessage: referenceSkipMessage(input.label, error),
+    };
+  }
+
+  return { count: data && data.length > 0 ? 1 : 0, skippedMessage: null };
+}
+
+function summarizeReferenceResults(label: string, results: Awaited<ReturnType<typeof countExactReference>>[]) {
+  return {
+    label,
+    count: results.reduce((total, result) => total + result.count, 0),
+    skippedMessages: Array.from(
+      new Set(results.map((result) => result.skippedMessage).filter(Boolean) as string[])
+    ),
+  };
+}
+
+async function checkInventoryReferences(
+  supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
+  item: Pick<ExistingInventoryMatch, 'item_id' | 'part_number'>
+): Promise<ReferenceCheckResult> {
+  const checks = await Promise.all([
+    Promise.all([
+      countExactReference({
+          supabase,
+          table: 'inventory_transactions',
+          label: 'transaction history',
+          column: 'item_id',
+          value: item.item_id,
+        }),
+      countExactReference({
+          supabase,
+          table: 'inventory_transactions',
+          label: 'transaction history',
+          column: 'part_number',
+          value: item.part_number,
+        }),
+    ]).then((results) => summarizeReferenceResults('inventory transaction', results)),
+    Promise.all([
+      countExactReference({
+          supabase,
+          table: 'pull_request_lines',
+          label: 'pull request lines',
+          column: 'item_id',
+          value: item.item_id,
+        }),
+      countExactReference({
+          supabase,
+          table: 'pull_request_lines',
+          label: 'pull request lines',
+          column: 'part_number',
+          value: item.part_number,
+        }),
+    ]).then((results) => summarizeReferenceResults('pull request line', results)),
+    Promise.all([
+      countExactReference({
+          supabase,
+          table: 'delivery_stop_items',
+          label: 'delivery stop items',
+          column: 'item_id',
+          value: item.item_id,
+          optional: true,
+        }),
+      countExactReference({
+          supabase,
+          table: 'delivery_stop_items',
+          label: 'delivery stop items',
+          column: 'part_number',
+          value: item.part_number,
+          optional: true,
+        }),
+    ]).then((results) => summarizeReferenceResults('delivery stop item', results)),
+    Promise.all([
+      countTextReference({
+          supabase,
+          table: 'shipping_manifest_history',
+          label: 'manifest history',
+          column: 'items',
+          value: item.item_id,
+          optional: true,
+        }),
+      countTextReference({
+          supabase,
+          table: 'shipping_manifest_history',
+          label: 'manifest history',
+          column: 'items',
+          value: item.part_number,
+          optional: true,
+        }),
+    ]).then((results) => summarizeReferenceResults('manifest history', results)),
+    Promise.all([
+      countTextReference({
+          supabase,
+          table: 'shipping_bom_history',
+          label: 'BOM history',
+          column: 'items',
+          value: item.item_id,
+          optional: true,
+        }),
+      countTextReference({
+          supabase,
+          table: 'shipping_bom_history',
+          label: 'BOM history',
+          column: 'items',
+          value: item.part_number,
+          optional: true,
+        }),
+    ]).then((results) => summarizeReferenceResults('BOM history', results)),
+  ]);
+
+  return {
+    references: checks
+      .filter((check) => check.count > 0)
+      .map(({ label, count }) => ({ label, count })),
+    skippedMessages: Array.from(new Set(checks.flatMap((check) => check.skippedMessages))),
+  };
+}
+
 async function logInventoryAudit(
   supabase: Awaited<ReturnType<typeof supabaseAdmin>>,
   input: {
-    transaction_type: 'INVENTORY_CREATED' | 'INVENTORY_UPDATED' | 'INVENTORY_ADJUSTMENT';
+    transaction_type:
+      | 'INVENTORY_CREATED'
+      | 'INVENTORY_UPDATED'
+      | 'INVENTORY_ADJUSTMENT'
+      | 'INVENTORY_ARCHIVED';
     item_id: string;
     part_number: string | null;
     description: string | null;
@@ -181,6 +453,7 @@ function buildInventoryPayloadWithSupply(input: InventoryImportInput): Inventory
     location: normalizeSite(base.site || base.location),
     bin_location: cleanInventoryText(base.bin_location) || null,
     is_supply: input.is_supply ?? false,
+    is_active: true,
   };
 }
 
@@ -215,6 +488,7 @@ function toInventoryUpdatePayload(
         ? existing.reorder_point ?? proposed.reorder_point
         : proposed.reorder_point,
     is_supply: input.is_supply ?? existing.is_supply ?? false,
+    is_active: true,
   };
 }
 
@@ -245,8 +519,9 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
   if (itemIds.length > 0) {
     const { data, error } = await supabase
       .from('inventory')
-      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
-      .in('item_id', itemIds);
+      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply,is_active')
+      .in('item_id', itemIds)
+      .eq('is_active', true);
 
     if (error) {
       throw new Error(databaseErrorMessage('Loading existing inventory by item ID', error));
@@ -266,8 +541,9 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
   if (partNumbers.length > 0) {
     const { data, error } = await supabase
       .from('inventory')
-      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
-      .in('part_number', partNumbers);
+      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply,is_active')
+      .in('part_number', partNumbers)
+      .eq('is_active', true);
 
     if (error) {
       throw new Error(databaseErrorMessage('Loading existing inventory by part number', error));
@@ -370,7 +646,7 @@ export async function createInventoryItem(
     const { data: insertedRecord, error } = await supabase
       .from('inventory')
       .insert(payload)
-      .select('item_id,part_number,description,site,bin_location,qty_on_hand')
+      .select('item_id,part_number,description,site,bin_location,qty_on_hand,is_active')
       .maybeSingle();
 
     if (error) {
@@ -424,8 +700,9 @@ export async function updateInventoryItem(
 
     const { data: currentRecord, error: currentRecordError } = await supabase
       .from('inventory')
-      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
+      .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply,is_active')
       .eq('id', input.id)
+      .eq('is_active', true)
       .maybeSingle();
 
     if (currentRecordError) {
@@ -490,7 +767,8 @@ export async function updateInventoryItem(
       .from('inventory')
       .update(payload)
       .eq('id', input.id)
-      .select('id,item_id,part_number,description,site,bin_location,qty_on_hand')
+      .eq('is_active', true)
+      .select('id,item_id,part_number,description,site,bin_location,qty_on_hand,is_active')
       .maybeSingle();
 
     if (error) {
@@ -531,6 +809,103 @@ export async function updateInventoryItem(
     return {
       ok: false,
       message: error instanceof Error ? error.message : 'Failed to update inventory item.',
+    };
+  }
+}
+
+export async function archiveInventoryItem(itemId: string): Promise<InventoryActionResult> {
+  try {
+    await requireInventoryDeleteAccess();
+
+    const cleanItemId = cleanInventoryText(itemId);
+
+    if (!cleanItemId) {
+      return { ok: false, message: 'Inventory item ID is required.' };
+    }
+
+    const supabase = await supabaseAdmin();
+    const { data: currentRecord, error: currentRecordError } = await supabase
+      .from('inventory')
+      .select(
+        'id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply,is_active'
+      )
+      .eq('item_id', cleanItemId)
+      .maybeSingle();
+
+    if (currentRecordError) {
+      return {
+        ok: false,
+        message: databaseErrorMessage('Loading inventory record for delete', currentRecordError),
+      };
+    }
+
+    if (!currentRecord) {
+      return { ok: false, message: 'Inventory record was not found.' };
+    }
+
+    const current = currentRecord as ExistingInventoryMatch;
+
+    if (current.is_active === false) {
+      return { ok: false, message: 'Inventory item is already archived.' };
+    }
+
+    const referenceCheck = await checkInventoryReferences(supabase, current);
+    const { references, skippedMessages } = referenceCheck;
+    const archivedAt = new Date().toISOString();
+    const { error: archiveError } = await supabase
+      .from('inventory')
+      .update({ is_active: false, updated_at: archivedAt })
+      .eq('id', current.id);
+
+    if (archiveError) {
+      return {
+        ok: false,
+        message: databaseErrorMessage('Archiving inventory item', archiveError),
+      };
+    }
+
+    const referenceSummary =
+      references.length > 0
+        ? references.map((reference) => `${reference.count} ${reference.label}(s)`).join(', ')
+        : 'No history references found before archive.';
+    const transactionReference = references.find(
+      (reference) => reference.label === 'inventory transaction'
+    );
+    const advisoryMessages = [
+      transactionReference && transactionReference.count > 0
+        ? 'Item cannot be deleted because it has transaction history.'
+        : null,
+      ...skippedMessages,
+    ].filter(Boolean) as string[];
+
+    await logInventoryAudit(supabase, {
+      transaction_type: 'INVENTORY_ARCHIVED',
+      item_id: current.item_id,
+      part_number: current.part_number,
+      description: current.description,
+      quantity: current.qty_on_hand,
+      from_location: inventoryPlace(current.site || current.location, current.bin_location),
+      reference: current.item_id,
+      notes: `Inventory item archived. ${referenceSummary}`,
+      details: {
+        archived_at: archivedAt,
+        before: current,
+        references,
+        skipped_reference_checks: skippedMessages,
+      },
+    });
+
+    revalidateInventoryPaths([current.item_id]);
+
+    return {
+      ok: true,
+      message: 'Item archived.',
+      skipReasons: advisoryMessages.length > 0 ? advisoryMessages : undefined,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Failed to archive inventory item.',
     };
   }
 }
@@ -581,7 +956,11 @@ export async function importInventoryItems(
       const payload = existing ? toInventoryUpdatePayload(row, existing) : buildInventoryPayloadWithSupply(row);
 
       if (existing) {
-        const { error } = await supabase.from('inventory').update(payload).eq('id', existing.id);
+        const { error } = await supabase
+          .from('inventory')
+          .update(payload)
+          .eq('id', existing.id)
+          .eq('is_active', true);
 
         if (error) {
           saveErrors.push(`Row ${rowNumber}: ${databaseErrorMessage('Updating inventory row', error)}`);
@@ -621,6 +1000,7 @@ export async function importInventoryItems(
             qty_on_hand: payload.qty_on_hand,
             reorder_point: payload.reorder_point,
             is_supply: payload.is_supply,
+            is_active: true,
           };
 
           if (existing.item_id !== updatedMatch.item_id) {
@@ -638,7 +1018,7 @@ export async function importInventoryItems(
         const { data, error } = await supabase
           .from('inventory')
           .insert(payload)
-          .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply')
+          .select('id,item_id,part_number,description,category,location,site,bin_location,qty_on_hand,reorder_point,is_supply,is_active')
           .single();
 
         if (error) {

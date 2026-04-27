@@ -47,8 +47,9 @@ export async function POST(req: Request) {
     // get current qty
     const { data: item, error: itemError } = await supabase
       .from('inventory')
-      .select('item_id,part_number,description,qty_on_hand,location,site,bin_location')
+      .select('item_id,part_number,description,qty_on_hand,location,site,bin_location,is_active')
       .eq('id', itemId)
+      .eq('is_active', true)
       .single();
 
     if (itemError || !item) {
@@ -87,7 +88,8 @@ export async function POST(req: Request) {
     const { error: updateError } = await supabase
       .from('inventory')
       .update({ qty_on_hand: newQty })
-      .eq('id', itemId);
+      .eq('id', itemId)
+      .eq('is_active', true);
 
     if (updateError) {
       return NextResponse.json({
