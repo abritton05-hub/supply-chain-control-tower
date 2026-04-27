@@ -56,16 +56,12 @@ const baseNavLinks: NavLink[] = [
   { href: '/address-book', label: 'Address Book', icon: 'addressBook', roles: ['warehouse', 'admin'] },
   {
     href: '/delivery',
-<<<<<<< HEAD
-    label: 'Shipping',
-    icon: '🚚',
-=======
     label: 'Shipping & Delivery',
     icon: 'delivery',
     roles: ['warehouse', 'admin'],
->>>>>>> 5949f581 (Checkpoint before live launch fixes)
     matchHrefs: ['/bom', '/driver-manifest', '/shipping'],
   },
+
 ];
 
 const adminLinks: NavLink[] = [
@@ -306,4 +302,7 @@ export function Sidebar({ role }: SidebarProps) {
     </aside>
   );
 }
+
+
+
 
