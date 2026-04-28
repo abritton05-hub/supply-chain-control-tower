@@ -29,6 +29,27 @@ function cleanText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function readJson(response: Response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function isMissingRelationError(data: unknown, relation: string) {
+  if (!isObject(data)) return false;
+  const message = [data.message, data.details, data.hint, data.code]
+    .map((value) => (typeof value === 'string' ? value : ''))
+    .join(' ')
+    .toLowerCase();
+  return message.includes(relation.toLowerCase()) && message.includes('does not exist');
+}
+
 function bomReference(body: Record<string, unknown>) {
   return [body.bom_number, body.manifest_number, body.reference]
     .map(cleanText)
@@ -128,6 +149,119 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : 'Save failed.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const id = cleanText(body.id);
+    const bomNumber = cleanText(body.bom_number);
+
+    if (!id && !bomNumber) {
+      return NextResponse.json({ ok: false, message: 'id or bom_number is required.' }, { status: 400 });
+    }
+
+    const selectors = ['id,bom_number,manifest_number,reference'];
+    let loadUrl = `${SUPABASE_URL}/rest/v1/shipping_bom_history?select=${selectors.join(',')}`;
+    loadUrl += id
+      ? `&id=eq.${encodeURIComponent(id)}`
+      : `&bom_number=eq.${encodeURIComponent(bomNumber)}`;
+
+    const loadRes = await fetch(loadUrl, { method: 'GET', headers: headers(), cache: 'no-store' });
+    const loadData = await readJson(loadRes);
+    if (!loadRes.ok) {
+      return NextResponse.json(
+        { ok: false, message: (isObject(loadData) && cleanText(loadData.message)) || 'Load failed.' },
+        { status: loadRes.status }
+      );
+    }
+
+    const rows = (Array.isArray(loadData) ? loadData : []).filter(isObject);
+    if (!rows.length) {
+      return NextResponse.json({ ok: false, message: 'No matching delivery receipt found.' }, { status: 404 });
+    }
+
+    const receipt = rows[0];
+    const resolvedBomNumber = cleanText(receipt.bom_number) || bomNumber;
+
+    let signedBomDeleteCount = 0;
+    if (resolvedBomNumber) {
+      const signedDeleteRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/signed_bom_files?bom_number=eq.${encodeURIComponent(resolvedBomNumber)}`,
+        {
+          method: 'DELETE',
+          headers: headers(),
+        }
+      );
+      const signedDeleteData = await readJson(signedDeleteRes);
+      if (!signedDeleteRes.ok && !isMissingRelationError(signedDeleteData, 'signed_bom_files')) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              (isObject(signedDeleteData) && cleanText(signedDeleteData.message)) ||
+              'Failed to delete signed delivery receipt files.',
+          },
+          { status: signedDeleteRes.status }
+        );
+      }
+      if (Array.isArray(signedDeleteData)) {
+        signedBomDeleteCount = signedDeleteData.length;
+      }
+    }
+
+    const deleteUrl = `${SUPABASE_URL}/rest/v1/shipping_bom_history?${
+      id ? `id=eq.${encodeURIComponent(id)}` : `bom_number=eq.${encodeURIComponent(bomNumber)}`
+    }`;
+    const deleteRes = await fetch(deleteUrl, { method: 'DELETE', headers: headers() });
+    const deleteData = await readJson(deleteRes);
+
+    if (!deleteRes.ok) {
+      return NextResponse.json(
+        { ok: false, message: (isObject(deleteData) && cleanText(deleteData.message)) || 'Delete failed.' },
+        { status: deleteRes.status }
+      );
+    }
+
+    const logResult = await logTransaction({
+      transaction_type: 'BOM_CREATED',
+      description: cleanText(receipt.reference) || `Delivery receipt ${resolvedBomNumber} deleted`,
+      quantity: null,
+      from_location: null,
+      to_location: null,
+      reference: bomReference(receipt),
+      notes: 'Delivery receipt deleted.',
+      entity_type: 'shipping_bom_history',
+      entity_id: id || resolvedBomNumber || null,
+      details: { ...receipt, signed_bom_file_delete_count: signedBomDeleteCount, deleted: true },
+      write_inventory_transaction: false,
+      write_activity_log: true,
+    });
+
+    if (logResult.ok === false) {
+      console.error('Delivery receipt delete transaction logging failed.', {
+        bomNumber: resolvedBomNumber,
+        message: logResult.message,
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      message: 'Delivery receipt deleted.',
+      deleted_count: Array.isArray(deleteData) ? deleteData.length : rows.length,
+      signed_file_metadata_deleted: signedBomDeleteCount,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Delete failed.' },
       { status: 500 }
     );
   }

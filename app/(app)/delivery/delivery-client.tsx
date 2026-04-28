@@ -591,7 +591,7 @@ async function loadManifestRows(): Promise<StopRow[]> {
 async function loadBomRows(): Promise<BomDraft[]> {
   const res = await fetch('/api/shipping/bom-history', { cache: 'no-store' });
   const data = await res.json();
-  if (!data.ok) throw new Error(data.message || 'Failed to load BOM history.');
+  if (!data.ok) throw new Error(data.message || 'Failed to load delivery receipt history.');
 
   return (data.rows || []).map((row: any) => ({
     bomNumber: row.bom_number || '',
@@ -712,6 +712,17 @@ async function saveBomRow(bom: BomDraft) {
 
   const data = await res.json();
   if (!data.ok) throw new Error(data.message || 'Failed to save BOM.');
+}
+
+async function deleteBomReceipt(bomNumber: string) {
+  const res = await fetch('/api/shipping/bom-history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bom_number: bomNumber }),
+  });
+
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete delivery receipt.');
 }
 
 function printElementById(id: string) {
@@ -1122,7 +1133,7 @@ function StopModal({
               onClick={() => onCreateBom(draft)}
               className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
             >
-              Create BOM
+              Create Delivery Receipt
             </button>
           ) : null}
 
@@ -1133,14 +1144,14 @@ function StopModal({
                 onClick={() => signedBomInputRef.current?.click()}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
-                Upload Signed BOM
+                Upload Signed Copy
               </button>
               <button
                 type="button"
                 onClick={() => onViewSignedBoms(draft)}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
-                View Signed BOMs
+                View Signed Copies
               </button>
               <input
                 ref={signedBomInputRef}
@@ -1406,8 +1417,8 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
             unoptimized
           />
           <div className="title-block">
-            <h1>BOM / Release</h1>
-            <p>BOM #: {bom.bomNumber}</p>
+            <h1>Delivery Receipt</h1>
+            <p>Receipt #: {bom.bomNumber}</p>
             <p>Manifest #: {bom.manifestNumber}</p>
           </div>
         </div>
@@ -1463,6 +1474,98 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
         </div>
 
         <SignatureGrid />
+      </div>
+    </div>
+  );
+}
+
+function DeliveryReceiptModal({
+  receipt,
+  onClose,
+  onPrint,
+  onUploadSignedCopy,
+  onViewSignedCopies,
+  onDelete,
+}: {
+  receipt: BomDraft | null;
+  onClose: () => void;
+  onPrint: (receipt: BomDraft) => void;
+  onUploadSignedCopy: (receipt: BomDraft) => void;
+  onViewSignedCopies: (receipt: BomDraft) => void;
+  onDelete: (receipt: BomDraft) => void;
+}) {
+  if (!receipt) return null;
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 p-4">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-slate-950">Delivery Receipt {receipt.bomNumber}</h3>
+            <p className="text-sm text-slate-500">
+              Manifest {receipt.manifestNumber || '-'} · {receipt.createdAt || 'Unknown date'}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="erp-action-secondary">
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Reference</div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">{receipt.reference || '-'}</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Contact</div>
+            <div className="mt-1 whitespace-pre-line text-sm font-semibold text-slate-900">
+              {receipt.contact || '-'}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Ship From</div>
+            <div className="mt-1 whitespace-pre-line text-sm font-semibold text-slate-900">
+              {receipt.shipFrom || '-'}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Ship To</div>
+            <div className="mt-1 whitespace-pre-line text-sm font-semibold text-slate-900">
+              {receipt.shipTo || '-'}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3 sm:col-span-2">
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Items</div>
+            <pre className="mt-1 whitespace-pre-wrap text-sm text-slate-900">{receipt.items || '-'}</pre>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3 sm:col-span-2">
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Notes</div>
+            <pre className="mt-1 whitespace-pre-wrap text-sm text-slate-900">{receipt.notes || '-'}</pre>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button type="button" onClick={() => onPrint(receipt)} className="erp-action-secondary">
+            Print
+          </button>
+          <button
+            type="button"
+            onClick={() => onUploadSignedCopy(receipt)}
+            className="erp-action-secondary"
+          >
+            Upload Signed Copy
+          </button>
+          <button
+            type="button"
+            onClick={() => onViewSignedCopies(receipt)}
+            className="erp-action-secondary"
+          >
+            View Signed Copies
+          </button>
+          <button type="button" onClick={() => onDelete(receipt)} className="erp-action-secondary text-rose-700">
+            Delete
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1757,7 +1860,7 @@ function StopsTable({
                     ) : (
                       <div className="erp-row-actions">
                         <button type="button" onClick={() => onOpen(row)} className="erp-action-primary">
-                          Open
+                          Open/Edit
                         </button>
                         {onPrintLabels ? (
                           <button
@@ -1784,7 +1887,7 @@ function StopsTable({
                             onClick={() => onDeleteStop(row)}
                             className="erp-action-secondary text-rose-700"
                           >
-                            Delete
+                            Delete/Remove
                           </button>
                         ) : null}
                         {row.direction === 'outgoing' && onCreateBom ? (
@@ -1843,6 +1946,7 @@ export function DeliveryClient({
     useState<ManifestStatusFilter>(initialManifestHistoryFilter);
   const [initialManifestFocusApplied, setInitialManifestFocusApplied] = useState(false);
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
+  const [selectedReceipt, setSelectedReceipt] = useState<BomDraft | null>(null);
   const [message, setMessage] = useState('');
   const [loadingLabel, setLoadingLabel] = useState('');
   const [signedBomFiles, setSignedBomFiles] = useState<SignedBomFile[]>([]);
@@ -2366,7 +2470,33 @@ export function DeliveryClient({
 
     if (
       !window.confirm(
-        `Delete delivery receipt ${manifestNumber} for ${manifestDate}? This removes the manifest history records for that date.`
+        `Delete manifest ${manifestNumber} for ${manifestDate}? This deletes all stops for this manifest/date and any related stop line items.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Deleting manifest...');
+      await deleteManifestReceipt(manifestNumber, manifestDate);
+      await refreshData();
+      setMessage(`Manifest ${manifestNumber} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete delivery receipt.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleDeleteReceipt(receipt: BomDraft) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete delivery receipt ${receipt.bomNumber}? This removes this receipt and signed copy metadata linked to it.`
       )
     ) {
       return;
@@ -2374,9 +2504,10 @@ export function DeliveryClient({
 
     try {
       setLoadingLabel('Deleting delivery receipt...');
-      await deleteManifestReceipt(manifestNumber, manifestDate);
+      await deleteBomReceipt(receipt.bomNumber);
       await refreshData();
-      setMessage(`Delivery receipt ${manifestNumber} deleted.`);
+      setSelectedReceipt(null);
+      setMessage(`Delivery receipt ${receipt.bomNumber} deleted.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not delete delivery receipt.');
     } finally {
@@ -2490,7 +2621,7 @@ export function DeliveryClient({
           <div>
             <h2 className="text-lg font-bold text-slate-950">Shipping & Delivery Control</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Manual pickups, drop offs, manifest history, and BOM release paperwork.
+              Manual pickups, drop offs, manifest history, and delivery receipt paperwork.
             </p>
           </div>
 
@@ -2553,7 +2684,7 @@ export function DeliveryClient({
         <Stat label="Selected Manifest" value={selectedDateManifestNumber || 'DAI-M-'} />
         <Stat label="Pickups" value={String(pickups.length)} />
         <Stat label="Drop Offs" value={String(dropOffs.length)} />
-        <Stat label="Saved BOMs" value={String(bomDrafts.length)} />
+        <Stat label="Saved Receipts" value={String(bomDrafts.length)} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -2695,7 +2826,7 @@ export function DeliveryClient({
                           onClick={() => handleDeleteManifestReceipt(manifestNumber, date)}
                           className="erp-action-secondary text-rose-700"
                         >
-                          Delete Receipt
+                          Delete
                         </button>
                       </div>
 
@@ -2724,12 +2855,12 @@ export function DeliveryClient({
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-        <h3 className="text-base font-bold text-slate-950">BOM / Release History</h3>
+        <h3 className="text-base font-bold text-slate-950">Delivery Receipt History</h3>
         <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
               <tr>
-                <th className="px-3 py-3">BOM #</th>
+                <th className="px-3 py-3">Receipt #</th>
                 <th className="px-3 py-3">Manifest</th>
                 <th className="px-3 py-3">Reference</th>
                 <th className="px-3 py-3">Ship To</th>
@@ -2739,7 +2870,19 @@ export function DeliveryClient({
             <tbody className="divide-y divide-slate-200 bg-white">
               {bomDrafts.length ? (
                 bomDrafts.map((bom) => (
-                  <tr key={bom.bomNumber} className="align-top hover:bg-slate-50">
+                  <tr
+                    key={bom.bomNumber}
+                    className="align-top hover:bg-slate-50"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedReceipt(bom)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedReceipt(bom);
+                      }
+                    }}
+                  >
                     <td className="px-3 py-3 font-bold text-slate-950">{bom.bomNumber}</td>
                     <td className="px-3 py-3">{bom.manifestNumber || '-'}</td>
                     <td className="px-3 py-3">{bom.reference || '-'}</td>
@@ -2748,31 +2891,13 @@ export function DeliveryClient({
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedReceipt(bom);
+                          }}
+                          className="erp-action-primary"
                         >
-                          Print
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => bomUploadInputRefs.current[bom.bomNumber]?.click()}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                        >
-                          Upload Signed BOM
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openSignedBomList({
-                              manifestNumber: bom.manifestNumber,
-                              bomNumber: bom.bomNumber,
-                              stopId: bom.sourceStopId || undefined,
-                              title: `Signed BOMs · ${bom.bomNumber}`,
-                            })
-                          }
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                        >
-                          View Signed BOMs
+                          Open
                         </button>
                         <input
                           ref={(node) => {
@@ -2796,7 +2921,7 @@ export function DeliveryClient({
               ) : (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                    No BOMs created yet. Open a drop off and select Create BOM.
+                    No delivery receipts created yet. Open a drop off and select Create BOM.
                   </td>
                 </tr>
               )}
@@ -2839,6 +2964,22 @@ export function DeliveryClient({
             title: `Signed BOMs · Stop ${row.id}`,
           })
         }
+      />
+
+      <DeliveryReceiptModal
+        receipt={selectedReceipt}
+        onClose={() => setSelectedReceipt(null)}
+        onPrint={(receipt) => printElementById(`print-bom-${receipt.bomNumber}`)}
+        onUploadSignedCopy={(receipt) => bomUploadInputRefs.current[receipt.bomNumber]?.click()}
+        onViewSignedCopies={(receipt) =>
+          openSignedBomList({
+            manifestNumber: receipt.manifestNumber,
+            bomNumber: receipt.bomNumber,
+            stopId: receipt.sourceStopId || undefined,
+            title: `Signed copies · ${receipt.bomNumber}`,
+          })
+        }
+        onDelete={handleDeleteReceipt}
       />
 
       {signedBomModalOpen ? (
