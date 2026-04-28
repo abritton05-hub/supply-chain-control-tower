@@ -258,6 +258,30 @@ function parseBomPrintableLines(items: string) {
     });
 }
 
+function parsePackingSlipLines(items: string) {
+  return items
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split('\t');
+
+      if (parts.length >= 3) {
+        return {
+          quantity: parts[0] || '-',
+          part: parts[1] || '-',
+          description: parts[2] || '-',
+        };
+      }
+
+      return {
+        quantity: '-',
+        part: '-',
+        description: line,
+      };
+    });
+}
+
 function printableStopLines(row: Pick<StopRow, 'items' | 'lineItems'>) {
   const structuredItems = validStructuredLines(row.lineItems).map((line) => ({
     quantity: String(parseQuantity(line.quantity) || 1),
@@ -749,7 +773,7 @@ function printElementById(id: string) {
           .item-head { color: #475569; font-size: 9px; font-weight: 800; text-transform: uppercase; }
           .box { border: 1px solid #cbd5e1; padding: 10px; margin-top: 12px; }
           .box-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 6px; }
-          .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
+          .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 20px; }
           .signature-label { font-size: 12px; font-weight: 800; }
           .signature-line { border-bottom: 1px solid #0f172a; height: 32px; margin-top: 8px; }
           @media print { body { padding: 18px; } .document { max-width: none; } .logo { width: 175px; } }
@@ -1405,8 +1429,8 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
             unoptimized
           />
           <div className="title-block">
-            <h1>BOM / Release</h1>
-            <p>BOM #: {bom.bomNumber}</p>
+            <h1>Delivery Receipt</h1>
+            <p>Delivery Receipt #: {bom.bomNumber}</p>
             <p>Manifest #: {bom.manifestNumber}</p>
           </div>
         </div>
@@ -1415,7 +1439,7 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
           <MetaCell label="Created" value={bom.createdAt || '-'} />
           <MetaCell label="Reference" value={bom.reference || '-'} />
           <MetaCell label="Contact / POC" value={bom.contact || '-'} />
-          <MetaCell label="Status" value="Release" />
+          <MetaCell label="Status" value="Delivered" />
         </div>
 
         <div className="meta">
@@ -1467,6 +1491,74 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
   );
 }
 
+function PrintablePackingSlip({ bom }: { bom: BomDraft }) {
+  const packingLines = parsePackingSlipLines(bom.items || '');
+
+  return (
+    <div id={`print-packing-slip-${bom.bomNumber}`} className="hidden">
+      <div className="document">
+        <div className="header">
+          <Image
+            src={DENALI_LOGO_SRC}
+            alt="Denali Advanced Integration"
+            width={190}
+            height={64}
+            className="logo"
+            unoptimized
+          />
+          <div className="title-block">
+            <h1>Packing Slip</h1>
+            <p>Packing Slip #: {bom.bomNumber}</p>
+            <p>Date: {bom.createdAt || '-'}</p>
+          </div>
+        </div>
+
+        <div className="meta">
+          <MetaCell label="Customer / Destination" value={bom.shipTo || '-'} />
+          <MetaCell label="Ship To Address" value={bom.shipTo || '-'} />
+          <MetaCell label="PO / Reference" value={bom.reference || '-'} />
+          <MetaCell label="Manifest #" value={bom.manifestNumber || '-'} />
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Line</th>
+              <th>Quantity</th>
+              <th>Part Number</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {packingLines.length ? (
+              packingLines.map((line, index) => (
+                <tr key={`${bom.bomNumber}-packing-${index}`}>
+                  <td>{index + 1}</td>
+                  <td>{line.quantity}</td>
+                  <td>{line.part}</td>
+                  <td>{line.description}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        <div className="box">
+          <div className="box-title">Notes</div>
+          <pre>{bom.notes || '-'}</pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PrintableManifest({
   manifestNumber,
   manifestDate,
@@ -1502,13 +1594,11 @@ function PrintableManifest({
             <tr>
               <th>Stop</th>
               <th>Type</th>
-              <th>Date</th>
               <th>From</th>
               <th>To</th>
               <th>PO / Ref</th>
               <th>Items</th>
               <th>Contact</th>
-              <th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -1516,7 +1606,6 @@ function PrintableManifest({
               <tr key={`print-row-${row.id}`}>
                 <td>{index + 1}</td>
                 <td>{formatType(row.direction)}</td>
-                <td>{row.date || '-'}</td>
                 <td>
                   <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
                 </td>
@@ -1536,13 +1625,10 @@ function PrintableManifest({
                   <PrintableItemLines lines={printableStopLines(row)} />
                 </td>
                 <td>{row.contact || '-'}</td>
-                <td>{displayStopStatus(row.status)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-
-        <SignatureGrid />
       </div>
     </div>
   );
@@ -2480,7 +2566,7 @@ export function DeliveryClient({
           <div>
             <h2 className="text-lg font-bold text-slate-950">Shipping & Delivery Control</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Manual pickups, drop offs, manifest history, and BOM release paperwork.
+              Manual pickups, drop offs, manifest route lists, and delivery receipt paperwork.
             </p>
           </div>
 
@@ -2659,7 +2745,7 @@ export function DeliveryClient({
                           }
                           className="erp-action-secondary"
                         >
-                          Print
+                          Print Manifest
                         </button>
                         {!isComplete ? (
                           <button
@@ -2714,12 +2800,12 @@ export function DeliveryClient({
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-        <h3 className="text-base font-bold text-slate-950">BOM / Release History</h3>
+        <h3 className="text-base font-bold text-slate-950">Delivery Receipt History</h3>
         <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
               <tr>
-                <th className="px-3 py-3">BOM #</th>
+                <th className="px-3 py-3">Delivery Receipt #</th>
                 <th className="px-3 py-3">Manifest</th>
                 <th className="px-3 py-3">Reference</th>
                 <th className="px-3 py-3">Ship To</th>
@@ -2741,7 +2827,14 @@ export function DeliveryClient({
                           onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
                           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                         >
-                          Print
+                          Print Delivery Receipt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => printElementById(`print-packing-slip-${bom.bomNumber}`)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Print Packing Slip
                         </button>
                         <button
                           type="button"
@@ -2780,13 +2873,14 @@ export function DeliveryClient({
                         />
                       </div>
                       <PrintableBom bom={bom} />
+                      <PrintablePackingSlip bom={bom} />
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                    No BOMs created yet. Open a drop off and select Create BOM.
+                    No delivery receipts created yet. Open a drop off and select Create BOM.
                   </td>
                 </tr>
               )}
