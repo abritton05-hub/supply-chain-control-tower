@@ -189,6 +189,15 @@ function filenameSafe(value: string) {
   return value.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'label-data';
 }
 
+export type SimplePtouchLabelRow = {
+  identifier: string;
+  part_number: string;
+  description: string;
+  qty: string;
+  location: string;
+  reference: string;
+};
+
 export function buildInventoryItemLabelPayload(input: InventoryLabelInput): LabelPayload {
   const partNumber = clean(input.partNumber);
   const itemId = clean(input.itemId);
@@ -396,6 +405,36 @@ export function downloadLabelPayloadsCsv(payloads: LabelPayload[], filenameSeed:
 
   link.href = url;
   link.download = `${filenameSafe(filenameSeed)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+export function simplePtouchRowsToCsv(rows: SimplePtouchLabelRow[]) {
+  const columns: Array<keyof SimplePtouchLabelRow> = [
+    'identifier',
+    'part_number',
+    'description',
+    'qty',
+    'location',
+    'reference',
+  ];
+  const header = columns.join(',');
+  const data = rows.map((row) => columns.map((column) => csvEscape(String(row[column] ?? ''))).join(','));
+  return [header, ...data].join('\r\n');
+}
+
+export function downloadSimplePtouchCsv(rows: SimplePtouchLabelRow[]) {
+  if (typeof window === 'undefined') return;
+
+  const csv = simplePtouchRowsToCsv(rows);
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = 'ptouch-label-export.csv';
   document.body.appendChild(link);
   link.click();
   link.remove();

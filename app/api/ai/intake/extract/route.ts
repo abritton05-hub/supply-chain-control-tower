@@ -9,7 +9,14 @@ import {
 
 export const runtime = 'nodejs';
 
-type Workflow = 'receiving' | 'pull_request' | 'delivery';
+type Workflow =
+  | 'receiving'
+  | 'pull_request'
+  | 'delivery'
+  | 'pickup'
+  | 'pickup_delivery'
+  | 'manifest'
+  | 'delivery_receipt';
 
 type ExtractedLineItem = {
   part_number: string;
@@ -52,7 +59,16 @@ function extractPocName(text: string) {
     .trim();
 
   const nameMatch = afterLabel.match(/^@?([a-z]+(?:\s+[a-z]+){0,2})/i);
-  return nameMatch?.[1]?.trim() || '';
+  const name = nameMatch?.[1]?.trim() || '';
+
+  if (!name) return '';
+  if (/^(team|warehouse|driver|dispatch|shipping|receiving)$/i.test(name)) return '';
+
+  return name;
+}
+
+function extractPhone(text: string) {
+  return text.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)?.[0] || '';
 }
 
 function extractLocations(text: string) {
@@ -142,6 +158,16 @@ function extractLineItems(text: string): ExtractedLineItem[] {
   return items;
 }
 
+function isDeliveryWorkflow(workflow: Workflow) {
+  return (
+    workflow === 'delivery' ||
+    workflow === 'pickup' ||
+    workflow === 'pickup_delivery' ||
+    workflow === 'manifest' ||
+    workflow === 'delivery_receipt'
+  );
+}
+
 function canUseWorkflow(role: AppRole, workflow: Workflow) {
   if (workflow === 'pull_request') return canSubmitPullRequests(role);
   if (workflow === 'receiving') return canReceiveInventory(role);
@@ -177,7 +203,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, message: 'document_id is required.' }, { status: 400 });
     }
 
-    if (workflow !== 'delivery') {
+    if (!isDeliveryWorkflow(workflow)) {
       return NextResponse.json({
         ok: true,
         extraction: {
@@ -195,6 +221,7 @@ export async function POST(request: Request) {
     const locations = extractLocations(rawText);
     const lineItems = extractLineItems(rawText);
     const poNumber = extractPoNumber(rawText);
+    const hasLowConfidence = !lineItems.length || !locations.pickup_location || !locations.dropoff_location;
 
     return NextResponse.json({
       ok: true,
@@ -205,7 +232,10 @@ export async function POST(request: Request) {
           company_name: '',
           pickup_location: locations.pickup_location,
           dropoff_location: locations.dropoff_location,
+          ship_from: locations.pickup_location,
+          ship_to: locations.dropoff_location,
           contact_name: extractPocName(rawText),
+          contact_phone: extractPhone(rawText),
           contact_email: extractEmail(rawText),
           requested_date: '',
           requested_time: extractRequestedTime(rawText, locations.pickup_location),
@@ -215,9 +245,16 @@ export async function POST(request: Request) {
           notes: rawText,
         },
         line_items: lineItems,
-        confidence: {},
+        confidence: hasLowConfidence
+          ? { extraction: 0.5 }
+          : { extraction: 0.86 },
         missing_required_fields: [],
-        warnings: rawText ? [] : ['No pasted text found. Paste the email text for accurate extraction.'],
+        warnings: [
+          ...(rawText ? [] : ['No pasted text found. Paste the email text for accurate extraction.']),
+          ...(hasLowConfidence
+            ? ['Low confidence extraction. Draft fields were populated for review and manual edits.']
+            : []),
+        ],
       },
       validation_issues: [],
     });
