@@ -64,9 +64,12 @@ type StopRow = {
 };
 
 type BomDraft = {
+  id: string;
   bomNumber: string;
   manifestNumber: string;
   sourceStopId: string;
+  date: string;
+  status: string;
   createdAt: string;
   reference: string;
   shipFrom: string;
@@ -561,12 +564,15 @@ async function loadManifestRows(): Promise<StopRow[]> {
 async function loadBomRows(): Promise<BomDraft[]> {
   const res = await fetch('/api/shipping/bom-history', { cache: 'no-store' });
   const data = await res.json();
-  if (!data.ok) throw new Error(data.message || 'Failed to load BOM history.');
+  if (!data.ok) throw new Error(data.message || 'Failed to load delivery receipt history.');
 
   return (data.rows || []).map((row: any) => ({
+    id: row.id || '',
     bomNumber: row.bom_number || '',
     manifestNumber: row.manifest_number || '',
     sourceStopId: row.source_stop_id || '',
+    date: row.bom_date || row.created_at || '',
+    status: row.status || 'Saved',
     createdAt: row.created_at || '',
     reference: fixBadEncodingCharacters(row.reference || ''),
     shipFrom: fixBadEncodingCharacters(row.ship_from || ''),
@@ -651,6 +657,8 @@ async function saveBomRow(bom: BomDraft) {
       bom_number: bom.bomNumber,
       manifest_number: bom.manifestNumber,
       source_stop_id: bom.sourceStopId,
+      bom_date: bom.date || null,
+      status: bom.status || 'Saved',
       reference: bom.reference,
       ship_from: bom.shipFrom,
       ship_to: bom.shipTo,
@@ -661,7 +669,28 @@ async function saveBomRow(bom: BomDraft) {
   });
 
   const data = await res.json();
-  if (!data.ok) throw new Error(data.message || 'Failed to save BOM.');
+  if (!data.ok) throw new Error(data.message || 'Failed to save delivery receipt.');
+}
+
+async function deleteBomRow(bom: BomDraft) {
+  const params = new URLSearchParams();
+  if (bom.id) params.set('id', bom.id);
+  if (bom.bomNumber) params.set('bom_number', bom.bomNumber);
+  if (bom.manifestNumber) params.set('manifest_number', bom.manifestNumber);
+
+  const res = await fetch(`/api/shipping/bom-history?${params.toString()}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete delivery receipt.');
+}
+
+async function deleteManifestStop(stopId: string) {
+  const res = await fetch(`/api/shipping/manifest-history?id=${encodeURIComponent(stopId)}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete manifest stop.');
 }
 
 function printElementById(id: string) {
@@ -722,6 +751,7 @@ function StopModal({
   onCreateBom,
   onUploadSignedBom,
   onViewSignedBoms,
+  onDeleteStop,
 }: {
   row: StopRow | null;
   locations: ShippingLocation[];
@@ -730,6 +760,7 @@ function StopModal({
   onCreateBom: (row: StopRow) => void;
   onUploadSignedBom: (row: StopRow, file: File) => Promise<void>;
   onViewSignedBoms: (row: StopRow) => void;
+  onDeleteStop: (row: StopRow) => void;
 }) {
   const [draft, setDraft] = useState<StopRow | null>(row);
   const [exportLabelsAfterSave, setExportLabelsAfterSave] = useState(true);
@@ -1071,7 +1102,7 @@ function StopModal({
               onClick={() => onCreateBom(draft)}
               className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
             >
-              Create BOM
+              Create Delivery Receipt
             </button>
           ) : null}
 
@@ -1082,14 +1113,14 @@ function StopModal({
                 onClick={() => signedBomInputRef.current?.click()}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
-                Upload Signed BOM
+                Upload Signed Delivery Receipt
               </button>
               <button
                 type="button"
                 onClick={() => onViewSignedBoms(draft)}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
-                View Signed BOMs
+                View Signed Delivery Receipts
               </button>
               <input
                 ref={signedBomInputRef}
@@ -1105,6 +1136,14 @@ function StopModal({
               />
             </>
           ) : null}
+
+          <button
+            type="button"
+            onClick={() => onDeleteStop(draft)}
+            className="rounded-xl border border-rose-300 bg-white px-4 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50"
+          >
+            Delete Stop
+          </button>
         </div>
       </div>
     </div>
@@ -1196,7 +1235,9 @@ function SignedBomFilesModal({
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-3">
           <div>
             <h3 className="text-lg font-bold text-slate-950">{title}</h3>
-            <p className="mt-1 text-sm text-slate-500">Signed BOM uploads for this record.</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Signed delivery receipt uploads for this record.
+            </p>
           </div>
           <button
             type="button"
@@ -1221,7 +1262,7 @@ function SignedBomFilesModal({
               {loading ? (
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center text-sm font-semibold text-slate-500">
-                    Loading signed BOM files...
+                    Loading signed delivery receipt files...
                   </td>
                 </tr>
               ) : files.length ? (
@@ -1249,12 +1290,106 @@ function SignedBomFilesModal({
               ) : (
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
-                    No signed BOM files uploaded yet.
+                    No signed delivery receipt files uploaded yet.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeliveryReceiptDetailModal({
+  bom,
+  signedFiles,
+  signedFilesLoading,
+  onClose,
+  onPrint,
+  onUpload,
+  onDelete,
+}: {
+  bom: BomDraft | null;
+  signedFiles: SignedBomFile[];
+  signedFilesLoading: boolean;
+  onClose: () => void;
+  onPrint: (bom: BomDraft) => void;
+  onUpload: (bom: BomDraft, file: File) => Promise<void>;
+  onDelete: (bom: BomDraft) => Promise<void>;
+}) {
+  const uploadRef = useRef<HTMLInputElement | null>(null);
+
+  if (!bom) return null;
+
+  const lines = parseBomPrintableLines(bom.items || '');
+  const signedFilesForBom = signedFiles.filter((file) => file.bom_number === bom.bomNumber);
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4">
+      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+        <div className="flex items-start justify-between border-b border-slate-200 pb-3">
+          <h3 className="text-lg font-bold text-slate-950">Delivery Receipt · {bom.bomNumber}</h3>
+          <button type="button" onClick={onClose} className="erp-action-secondary">
+            Close
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+          <p><span className="font-bold">BOM #:</span> {bom.bomNumber || '-'}</p>
+          <p><span className="font-bold">Manifest #:</span> {bom.manifestNumber || '-'}</p>
+          <p><span className="font-bold">Reference:</span> {bom.reference || '-'}</p>
+          <p><span className="font-bold">Date:</span> {bom.date ? formatUploadedAt(bom.date) : '-'}</p>
+          <p><span className="font-bold">Status:</span> {bom.status || 'Saved'}</p>
+          <p><span className="font-bold">Contact / POC:</span> {bom.contact || '-'}</p>
+          <p className="whitespace-pre-line"><span className="font-bold">Ship From:</span> {bom.shipFrom || '-'}</p>
+          <p className="whitespace-pre-line"><span className="font-bold">Ship To:</span> {bom.shipTo || '-'}</p>
+          <p className="md:col-span-2 whitespace-pre-line"><span className="font-bold">Notes:</span> {bom.notes || '-'}</p>
+        </div>
+        <div className="mt-4 rounded-xl border border-slate-200">
+          <div className="border-b border-slate-200 px-4 py-2 text-xs font-bold uppercase text-slate-500">
+            Line items
+          </div>
+          <div className="p-4 text-sm">
+            {lines.length ? lines.map((line, idx) => (
+              <div key={`${bom.bomNumber}-line-${idx}`} className="border-b py-1 last:border-b-0">
+                {line.quantity}x {line.part} — {line.description} (Boxes: {line.boxCount})
+              </div>
+            )) : <p className="text-slate-500">No line items.</p>}
+          </div>
+        </div>
+        <div className="mt-4 rounded-xl border border-slate-200 p-4 text-sm">
+          <p className="font-bold">Signed copy status</p>
+          {signedFilesLoading ? (
+            <p className="mt-1 text-slate-500">Loading...</p>
+          ) : signedFilesForBom.length ? (
+            <ul className="mt-2 space-y-1">
+              {signedFilesForBom.map((file) => (
+                <li key={file.id}>
+                  {file.signed_url ? <a className="text-cyan-700 underline" href={file.signed_url} target="_blank" rel="noreferrer">{file.file_name}</a> : file.file_name}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-slate-500">No signed copy uploaded.</p>
+          )}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" onClick={() => onPrint(bom)} className="erp-action-secondary">Print Delivery Receipt</button>
+          <button type="button" onClick={() => uploadRef.current?.click()} className="erp-action-secondary">Upload Signed Copy</button>
+          <button type="button" onClick={() => onDelete(bom)} className="rounded-xl border border-rose-300 bg-white px-4 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50">Delete Delivery Receipt</button>
+          <input
+            ref={uploadRef}
+            type="file"
+            accept="image/*,.pdf"
+            className="hidden"
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              await onUpload(bom, file);
+              event.target.value = '';
+            }}
+          />
         </div>
       </div>
     </div>
@@ -1355,7 +1490,7 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
             unoptimized
           />
           <div className="title-block">
-            <h1>BOM / Release</h1>
+            <h1>Delivery Receipt</h1>
             <p>BOM #: {bom.bomNumber}</p>
             <p>Manifest #: {bom.manifestNumber}</p>
           </div>
@@ -1711,7 +1846,7 @@ function StopsTable({
                             onClick={() => onCreateBom(row)}
                             className="erp-action-secondary"
                           >
-                            Create BOM
+                            Create Delivery Receipt
                           </button>
                         ) : null}
                         {onMarkComplete ? (
@@ -1761,11 +1896,12 @@ export function DeliveryClient({
     useState<ManifestStatusFilter>(initialManifestHistoryFilter);
   const [initialManifestFocusApplied, setInitialManifestFocusApplied] = useState(false);
   const [bomDrafts, setBomDrafts] = useState<BomDraft[]>([]);
+  const [selectedBom, setSelectedBom] = useState<BomDraft | null>(null);
   const [message, setMessage] = useState('');
   const [loadingLabel, setLoadingLabel] = useState('');
   const [signedBomFiles, setSignedBomFiles] = useState<SignedBomFile[]>([]);
   const [signedBomModalOpen, setSignedBomModalOpen] = useState(false);
-  const [signedBomModalTitle, setSignedBomModalTitle] = useState('Signed BOM Files');
+  const [signedBomModalTitle, setSignedBomModalTitle] = useState('Signed Delivery Receipt Files');
   const [signedBomListLoading, setSignedBomListLoading] = useState(false);
   const [intakeDraftApplied, setIntakeDraftApplied] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -1787,6 +1923,8 @@ export function DeliveryClient({
     setBomDrafts(bomRows);
     setLocations(shippingLocations);
   }
+
+  const activeRows = useMemo(() => activeManifestRows(rows), [rows]);
 
   useEffect(() => {
     async function init() {
@@ -1895,7 +2033,6 @@ export function DeliveryClient({
     rows,
   ]);
 
-  const activeRows = useMemo(() => activeManifestRows(rows), [rows]);
   const selectedDateManifestNumber = manifestNumberForDate(
     selectedManifestDate,
     activeRows,
@@ -1970,7 +2107,7 @@ export function DeliveryClient({
       cache: 'no-store',
     });
     const data = await res.json();
-    if (!data.ok) throw new Error(data.message || 'Failed to load signed BOM files.');
+  if (!data.ok) throw new Error(data.message || 'Failed to load signed delivery receipt files.');
     return (data.rows || []) as SignedBomFile[];
   }
 
@@ -1998,9 +2135,10 @@ export function DeliveryClient({
     bomNumber?: string;
     stopId?: string;
     title: string;
+    openModal?: boolean;
   }) {
     try {
-      setSignedBomModalOpen(true);
+      setSignedBomModalOpen(context.openModal ?? true);
       setSignedBomModalTitle(context.title);
       setSignedBomContext({
         manifestNumber: context.manifestNumber,
@@ -2012,7 +2150,9 @@ export function DeliveryClient({
       setSignedBomFiles(files);
     } catch (error) {
       setSignedBomFiles([]);
-      setMessage(error instanceof Error ? error.message : 'Could not load signed BOM files.');
+      setMessage(
+        error instanceof Error ? error.message : 'Could not load signed delivery receipt files.'
+      );
     } finally {
       setSignedBomListLoading(false);
     }
@@ -2105,7 +2245,7 @@ export function DeliveryClient({
 
   async function handleCreateBom(row: StopRow) {
     if (!canManageDelivery) {
-      setMessage('Warehouse or admin access is required to create BOMs.');
+      setMessage('Warehouse or admin access is required to create delivery receipts.');
       return;
     }
 
@@ -2117,9 +2257,12 @@ export function DeliveryClient({
     try {
       const bomNumber = createBomNumber(bomDrafts.map((bom) => bom.bomNumber).filter(Boolean));
       const bom: BomDraft = {
+        id: '',
         bomNumber,
         manifestNumber: row.manifestNumber,
         sourceStopId: row.id,
+        date: row.date || today(),
+        status: 'Saved',
         createdAt: new Date().toISOString(),
         reference: row.reference || row.shipmentTransferId,
         shipFrom: displayStopAddress(row.fromLocation, row.fromAddress),
@@ -2129,12 +2272,12 @@ export function DeliveryClient({
         notes: row.notes,
       };
 
-      setLoadingLabel('Creating BOM...');
+      setLoadingLabel('Creating delivery receipt...');
       await saveBomRow(bom);
       await refreshData();
-      setMessage(`BOM ${bomNumber} created.`);
+      setMessage(`Delivery receipt ${bomNumber} created.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'BOM creation failed.');
+      setMessage(error instanceof Error ? error.message : 'Delivery receipt creation failed.');
     } finally {
       setLoadingLabel('');
     }
@@ -2142,13 +2285,13 @@ export function DeliveryClient({
 
   async function handleUploadSignedBomForBom(bom: BomDraft, file: File) {
     try {
-      setLoadingLabel('Uploading signed BOM...');
+      setLoadingLabel('Uploading signed delivery receipt...');
       await uploadSignedBomFile(file, {
         manifestNumber: bom.manifestNumber,
         bomNumber: bom.bomNumber,
         stopId: bom.sourceStopId || undefined,
       });
-      setMessage(`Signed BOM uploaded for ${bom.bomNumber}.`);
+      setMessage(`Signed delivery receipt uploaded for ${bom.bomNumber}.`);
 
       if (
         signedBomContext &&
@@ -2163,7 +2306,7 @@ export function DeliveryClient({
         setSignedBomFiles(files);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Signed BOM upload failed.');
+      setMessage(error instanceof Error ? error.message : 'Signed delivery receipt upload failed.');
     } finally {
       setLoadingLabel('');
     }
@@ -2171,12 +2314,12 @@ export function DeliveryClient({
 
   async function handleUploadSignedBomForStop(row: StopRow, file: File) {
     try {
-      setLoadingLabel('Uploading signed BOM...');
+      setLoadingLabel('Uploading signed delivery receipt...');
       await uploadSignedBomFile(file, {
         manifestNumber: row.manifestNumber,
         stopId: row.id,
       });
-      setMessage(`Signed BOM uploaded for stop ${row.id}.`);
+      setMessage(`Signed delivery receipt uploaded for stop ${row.id}.`);
       if (
         signedBomContext &&
         signedBomContext.manifestNumber === row.manifestNumber &&
@@ -2189,7 +2332,59 @@ export function DeliveryClient({
         setSignedBomFiles(files);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Signed BOM upload failed.');
+      setMessage(error instanceof Error ? error.message : 'Signed delivery receipt upload failed.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleDeleteBom(bom: BomDraft) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to delete delivery receipts.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Delete this test/incorrect record? This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    try {
+      setLoadingLabel('Deleting delivery receipt...');
+      await deleteBomRow(bom);
+      if (selectedBom?.bomNumber === bom.bomNumber) {
+        setSelectedBom(null);
+      }
+      await refreshData();
+      setMessage(`Delivery receipt ${bom.bomNumber} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Delete failed.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleDeleteStop(row: StopRow) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to delete manifest stops.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Delete this test/incorrect record? This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    try {
+      setLoadingLabel('Deleting manifest stop...');
+      await deleteManifestStop(row.id);
+      if (selectedRow?.id === row.id) {
+        setSelectedRow(null);
+      }
+      await refreshData();
+      setMessage(`Stop ${row.id} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Delete failed.');
     } finally {
       setLoadingLabel('');
     }
@@ -2325,7 +2520,7 @@ export function DeliveryClient({
           <div>
             <h2 className="text-lg font-bold text-slate-950">Shipping & Delivery Control</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Manual pickups, drop offs, manifest history, and BOM release paperwork.
+              Manual pickups, drop offs, manifest history, and delivery receipt paperwork.
             </p>
           </div>
 
@@ -2388,7 +2583,7 @@ export function DeliveryClient({
         <Stat label="Selected Manifest" value={selectedDateManifestNumber || 'DAI-M-'} />
         <Stat label="Pickups" value={String(pickups.length)} />
         <Stat label="Drop Offs" value={String(dropOffs.length)} />
-        <Stat label="Saved BOMs" value={String(bomDrafts.length)} />
+        <Stat label="Saved Delivery Receipts" value={String(bomDrafts.length)} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -2539,13 +2734,13 @@ export function DeliveryClient({
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-        <h3 className="text-base font-bold text-slate-950">BOM / Release History</h3>
+        <h3 className="text-base font-bold text-slate-950">Delivery Receipt History</h3>
         <div className="mt-4 overflow-auto rounded-xl border border-slate-200">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
               <tr>
                 <th className="px-3 py-3">BOM #</th>
-                <th className="px-3 py-3">Manifest</th>
+                <th className="px-3 py-3">Manifest #</th>
                 <th className="px-3 py-3">Reference</th>
                 <th className="px-3 py-3">Ship To</th>
                 <th className="px-3 py-3 text-right">Actions</th>
@@ -2554,40 +2749,87 @@ export function DeliveryClient({
             <tbody className="divide-y divide-slate-200 bg-white">
               {bomDrafts.length ? (
                 bomDrafts.map((bom) => (
-                  <tr key={bom.bomNumber} className="align-top hover:bg-slate-50">
-                    <td className="px-3 py-3 font-bold text-slate-950">{bom.bomNumber}</td>
-                    <td className="px-3 py-3">{bom.manifestNumber || '-'}</td>
-                    <td className="px-3 py-3">{bom.reference || '-'}</td>
+                  <tr
+                    key={bom.bomNumber}
+                    className="cursor-pointer align-top hover:bg-slate-50"
+                    onClick={() => {
+                      setSelectedBom(bom);
+                      void openSignedBomList({
+                        manifestNumber: bom.manifestNumber,
+                        bomNumber: bom.bomNumber,
+                        stopId: bom.sourceStopId || undefined,
+                        title: `Signed Delivery Receipts · ${bom.bomNumber}`,
+                        openModal: false,
+                      });
+                    }}
+                  >
+                    <td className="px-3 py-3 font-bold text-cyan-800 underline">{bom.bomNumber}</td>
+                    <td className="px-3 py-3 text-cyan-800 underline">{bom.manifestNumber || '-'}</td>
+                    <td className="px-3 py-3 text-cyan-800 underline">{bom.reference || '-'}</td>
                     <td className="whitespace-pre-line px-3 py-3">{bom.shipTo || '-'}</td>
                     <td className="px-3 py-3 text-right">
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => printElementById(`print-bom-${bom.bomNumber}`)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedBom(bom);
+                            void openSignedBomList({
+                              manifestNumber: bom.manifestNumber,
+                              bomNumber: bom.bomNumber,
+                              stopId: bom.sourceStopId || undefined,
+                              title: `Signed Delivery Receipts · ${bom.bomNumber}`,
+                              openModal: false,
+                            });
+                          }}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            printElementById(`print-bom-${bom.bomNumber}`);
+                          }}
                           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                         >
                           Print
                         </button>
                         <button
                           type="button"
-                          onClick={() => bomUploadInputRefs.current[bom.bomNumber]?.click()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            bomUploadInputRefs.current[bom.bomNumber]?.click();
+                          }}
                           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                         >
-                          Upload Signed BOM
+                          Upload Signed Copy
                         </button>
                         <button
                           type="button"
-                          onClick={() =>
-                            openSignedBomList({
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void openSignedBomList({
                               manifestNumber: bom.manifestNumber,
                               bomNumber: bom.bomNumber,
                               stopId: bom.sourceStopId || undefined,
-                              title: `Signed BOMs · ${bom.bomNumber}`,
-                            })
-                          }
+                              title: `Signed Delivery Receipts · ${bom.bomNumber}`,
+                            });
+                          }}
                           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                         >
-                          View Signed BOMs
+                          View Signed Copies
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDeleteBom(bom);
+                          }}
+                          className="rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
+                        >
+                          Delete
                         </button>
                         <input
                           ref={(node) => {
@@ -2611,7 +2853,7 @@ export function DeliveryClient({
               ) : (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
-                    No BOMs created yet. Open a drop off and select Create BOM.
+                    No delivery receipts created yet. Open a drop off and select Create Delivery Receipt.
                   </td>
                 </tr>
               )}
@@ -2651,9 +2893,20 @@ export function DeliveryClient({
           openSignedBomList({
             manifestNumber: row.manifestNumber,
             stopId: row.id,
-            title: `Signed BOMs · Stop ${row.id}`,
+            title: `Signed Delivery Receipts · Stop ${row.id}`,
           })
         }
+        onDeleteStop={handleDeleteStop}
+      />
+
+      <DeliveryReceiptDetailModal
+        bom={selectedBom}
+        signedFiles={signedBomFiles}
+        signedFilesLoading={signedBomListLoading}
+        onClose={() => setSelectedBom(null)}
+        onPrint={(bom) => printElementById(`print-bom-${bom.bomNumber}`)}
+        onUpload={handleUploadSignedBomForBom}
+        onDelete={handleDeleteBom}
       />
 
       {signedBomModalOpen ? (

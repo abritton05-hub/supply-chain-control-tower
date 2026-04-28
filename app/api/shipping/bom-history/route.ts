@@ -36,6 +36,10 @@ function bomReference(body: Record<string, unknown>) {
     .join(' | ');
 }
 
+function cleanId(value: string | null) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 async function requireDeliveryAccess() {
   const profile = await getCurrentUserProfile();
 
@@ -128,6 +132,61 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : 'Save failed.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const { searchParams } = new URL(request.url);
+    const id = cleanId(searchParams.get('id'));
+    const bomNumber = cleanId(searchParams.get('bom_number'));
+    const manifestNumber = cleanId(searchParams.get('manifest_number'));
+
+    if (!id && !bomNumber) {
+      return NextResponse.json(
+        { ok: false, message: 'Delivery receipt id or BOM number is required.' },
+        { status: 400 }
+      );
+    }
+
+    const filter = id
+      ? `id=eq.${encodeURIComponent(id)}`
+      : `bom_number=eq.${encodeURIComponent(bomNumber)}`;
+    const deleteRes = await fetch(`${SUPABASE_URL}/rest/v1/shipping_bom_history?${filter}`, {
+      method: 'DELETE',
+      headers: headers(),
+    });
+    const deleteData = await deleteRes.json().catch(() => null);
+
+    if (!deleteRes.ok) {
+      return NextResponse.json(
+        { ok: false, message: deleteData?.message || 'Delete failed.' },
+        { status: deleteRes.status }
+      );
+    }
+
+    if (bomNumber) {
+      let signedFilter = `bom_number=eq.${encodeURIComponent(bomNumber)}`;
+      if (manifestNumber) {
+        signedFilter += `&manifest_number=eq.${encodeURIComponent(manifestNumber)}`;
+      }
+      await fetch(`${SUPABASE_URL}/rest/v1/signed_bom_files?${signedFilter}`, {
+        method: 'DELETE',
+        headers: headers(),
+      });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Delete failed.' },
       { status: 500 }
     );
   }
