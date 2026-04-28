@@ -459,3 +459,111 @@ export async function PATCH(request: Request) {
     );
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const url = new URL(request.url);
+    const id = cleanText(url.searchParams.get('id'));
+    const manifestNumber = cleanText(url.searchParams.get('manifest_number'));
+    const manifestDate = cleanText(url.searchParams.get('manifest_date'));
+
+    if (!id && (!manifestNumber || !manifestDate)) {
+      return NextResponse.json(
+        { ok: false, message: 'id or manifest_number + manifest_date is required.' },
+        { status: 400 }
+      );
+    }
+
+    const targetRowsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/shipping_manifest_history?select=id,manifest_number,stop_date${
+        id
+          ? `&id=eq.${encodeURIComponent(id)}`
+          : `&manifest_number=eq.${encodeURIComponent(manifestNumber)}&stop_date=eq.${encodeURIComponent(manifestDate)}`
+      }`,
+      {
+        method: 'GET',
+        headers: headers(),
+        cache: 'no-store',
+      }
+    );
+    const targetRowsData = await readJson(targetRowsRes);
+    if (!targetRowsRes.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: (isObject(targetRowsData) && cleanText(targetRowsData.message)) || 'Delete failed.',
+        },
+        { status: targetRowsRes.status }
+      );
+    }
+
+    const targetRows = (Array.isArray(targetRowsData) ? targetRowsData : []).filter(isObject);
+    const targetStopIds = targetRows.map((row) => cleanText(row.id)).filter(Boolean);
+    if (!targetStopIds.length) {
+      return NextResponse.json({ ok: false, message: 'No matching stops found.' }, { status: 404 });
+    }
+
+    for (const stopId of targetStopIds) {
+      const deleteItemsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/delivery_stop_items?stop_id=eq.${encodeURIComponent(stopId)}`,
+        {
+          method: 'DELETE',
+          headers: headers(),
+        }
+      );
+      if (!deleteItemsRes.ok) {
+        const deleteItemsData = await readJson(deleteItemsRes);
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              (isObject(deleteItemsData) && cleanText(deleteItemsData.message)) ||
+              'Delete failed while removing stop items.',
+          },
+          { status: deleteItemsRes.status }
+        );
+      }
+    }
+
+    const deleteStopsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/shipping_manifest_history?${
+        id
+          ? `id=eq.${encodeURIComponent(id)}`
+          : `manifest_number=eq.${encodeURIComponent(manifestNumber)}&stop_date=eq.${encodeURIComponent(manifestDate)}`
+      }`,
+      {
+        method: 'DELETE',
+        headers: headers(),
+      }
+    );
+    const deleteStopsData = await readJson(deleteStopsRes);
+    if (!deleteStopsRes.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: (isObject(deleteStopsData) && cleanText(deleteStopsData.message)) || 'Delete failed.',
+        },
+        { status: deleteStopsRes.status }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      deleted_count: targetStopIds.length,
+      message:
+        targetStopIds.length === 1
+          ? 'Manifest stop deleted.'
+          : `${targetStopIds.length} manifest records deleted.`,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Delete failed.' },
+      { status: 500 }
+    );
+  }
+}

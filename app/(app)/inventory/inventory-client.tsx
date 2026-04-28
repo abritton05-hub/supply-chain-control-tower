@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PrintInventoryTagButton, PrintLocationLabelButton } from '@/components/label-print-buttons';
 import { ScanCameraButton } from '@/components/scan-camera-button';
 import { parseScctBarcodePayload } from '@/lib/barcodes/scct-payload';
+import { archiveInventoryItem } from './actions';
 import type { InventoryRecord } from './types';
 
 type Props = {
@@ -98,6 +99,7 @@ export function InventoryClient({
   const [quickAdjustReason, setQuickAdjustReason] = useState('');
   const [quickAdjustMessage, setQuickAdjustMessage] = useState('');
   const [quickAdjustPending, setQuickAdjustPending] = useState(false);
+  const [archivePendingItemId, setArchivePendingItemId] = useState<string | null>(null);
 
   useEffect(() => {
     setQuery(initialQuery || initialBin);
@@ -286,6 +288,28 @@ export function InventoryClient({
       setQuickAdjustMessage(error instanceof Error ? error.message : 'Inventory adjustment failed.');
     } finally {
       setQuickAdjustPending(false);
+    }
+  }
+
+  async function handleArchiveInventoryItem(itemId: string, label: string) {
+    if (
+      !window.confirm(
+        `Archive ${label}? It will disappear from active inventory while transaction history remains.`
+      )
+    ) {
+      return;
+    }
+
+    setArchivePendingItemId(itemId);
+    try {
+      const result = await archiveInventoryItem(itemId);
+      const detail = result.skipReasons?.length ? ` ${result.skipReasons.join(' ')}` : '';
+      setCountMessage(`${result.message}${detail}`);
+      if (result.ok) {
+        router.refresh();
+      }
+    } finally {
+      setArchivePendingItemId(null);
     }
   }
 
@@ -580,6 +604,21 @@ export function InventoryClient({
                           <Link href={`/inventory/${item.item_id}`} className="erp-action-primary">
                             Open
                           </Link>
+                          {canEdit ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleArchiveInventoryItem(
+                                  item.item_id,
+                                  item.part_number || item.item_id
+                                )
+                              }
+                              disabled={archivePendingItemId === item.item_id}
+                              className="erp-action-danger"
+                            >
+                              {archivePendingItemId === item.item_id ? 'Archiving...' : 'Delete'}
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
