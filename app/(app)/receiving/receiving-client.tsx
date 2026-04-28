@@ -7,7 +7,7 @@ import { RECEIVING_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
 import type { ReceivingDraftPayload } from '@/lib/ai/intake/types';
 import {
   buildReceivingLabelPayload,
-  downloadLabelPayloadsCsv,
+  downloadPtouchLabelsCsv,
 } from '@/lib/labels/p-touch';
 import { receiveInventoryItem } from './actions';
 import type {
@@ -40,10 +40,6 @@ const EMPTY_FORM: ReceiveInventoryInput = {
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
-}
-
-function labelFileSeed(row: InventoryTransaction) {
-  return `receiving-label-${row.item_id || row.part_number || row.id}`;
 }
 
 function matchesInventoryItem(item: InventoryOption, value: string) {
@@ -245,7 +241,7 @@ export function ReceivingClient({ inventory, recentReceipts, initialItemQuery = 
       date: row.transaction_date || row.created_at,
     });
 
-    downloadLabelPayloadsCsv([payload], labelFileSeed(row));
+    downloadPtouchLabelsCsv([payload]);
     setMessage({
       ok: true,
       message: 'Label data exported for P-touch Editor import.',

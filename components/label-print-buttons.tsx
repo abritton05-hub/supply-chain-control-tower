@@ -4,7 +4,7 @@ import { useState } from 'react';
 import {
   buildInventoryItemLabelPayload,
   buildLocationLabelPayload,
-  downloadLabelPayloadsCsv,
+  downloadPtouchLabelsCsv,
 } from '@/lib/labels/p-touch';
 
 type InventoryLabelItem = {
@@ -29,18 +29,8 @@ type PrintInventoryTagButtonProps = PrintButtonProps & {
 type PrintLocationLabelButtonProps = PrintButtonProps & {
   location: string | null | undefined;
   binLocation?: string | null;
-  filenameSeed?: string;
 };
 
-function filenamePart(value: string | null | undefined) {
-  return value?.trim() || 'unassigned';
-}
-
-function locationFileSeed(location: string | null | undefined, binLocation?: string | null) {
-  return ['location-label', filenamePart(location), filenamePart(binLocation)]
-    .filter((value, index) => index < 2 || value !== 'unassigned')
-    .join('-');
-}
 
 function Message({
   message,
@@ -80,9 +70,9 @@ export function PrintInventoryTagButton({
         binLocation: item.bin_location,
       });
 
-      downloadLabelPayloadsCsv([payload], `inventory-tag-${item.part_number || item.item_id}`);
+      downloadPtouchLabelsCsv([payload]);
       setIsError(false);
-      setMessage('Inventory tag CSV exported for P-touch Editor.');
+      setMessage('P-touch label CSV exported.');
     } catch (error) {
       setIsError(true);
       setMessage(error instanceof Error ? error.message : 'Inventory tag export failed.');
@@ -92,7 +82,7 @@ export function PrintInventoryTagButton({
   return (
     <div className="flex flex-col items-start gap-1 sm:items-end">
       <button type="button" onClick={printInventoryTag} className={className}>
-        Print Inventory Tag
+        Export P-touch Labels
       </button>
       {showMessage ? <Message message={message} isError={isError} /> : null}
     </div>
@@ -102,7 +92,6 @@ export function PrintInventoryTagButton({
 export function PrintLocationLabelButton({
   location,
   binLocation,
-  filenameSeed,
   className = 'erp-button-secondary',
   showMessage = true,
 }: PrintLocationLabelButtonProps) {
@@ -116,12 +105,9 @@ export function PrintLocationLabelButton({
         binLocation,
       });
 
-      downloadLabelPayloadsCsv(
-        [payload],
-        filenameSeed || locationFileSeed(location, binLocation)
-      );
+      downloadPtouchLabelsCsv([payload]);
       setIsError(false);
-      setMessage('Location label CSV exported for P-touch Editor.');
+      setMessage('P-touch label CSV exported.');
     } catch (error) {
       setIsError(true);
       setMessage(error instanceof Error ? error.message : 'Location label export failed.');
@@ -131,7 +117,7 @@ export function PrintLocationLabelButton({
   return (
     <div className="flex flex-col items-start gap-1 sm:items-end">
       <button type="button" onClick={printLocationLabel} className={className}>
-        Print Location Label
+        Export P-touch Labels
       </button>
       {showMessage ? <Message message={message} isError={isError} /> : null}
     </div>
