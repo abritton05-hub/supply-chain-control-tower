@@ -234,7 +234,7 @@ export function ReceivingClient({ inventory, recentReceipts, initialItemQuery = 
     });
   }
 
-  function exportReceiptLabel(row: InventoryTransaction) {
+  async function exportReceiptLabel(row: InventoryTransaction) {
     const payload = buildReceivingLabelPayload({
       itemId: row.item_id,
       partNumber: row.part_number,
@@ -246,6 +246,18 @@ export function ReceivingClient({ inventory, recentReceipts, initialItemQuery = 
     });
 
     downloadLabelPayloadsCsv([payload], labelFileSeed(row));
+    void fetch('/api/activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action_type: 'P_TOUCH_LABEL_CSV_EXPORTED',
+        module: 'receiving',
+        record_id: row.id,
+        record_label: row.part_number || row.item_id,
+        reference_number: row.reference || null,
+      }),
+    });
+
     setMessage({
       ok: true,
       message: 'Label data exported for P-touch Editor import.',

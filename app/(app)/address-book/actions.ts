@@ -5,6 +5,7 @@ import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { canManageDelivery } from '@/lib/auth/roles';
 import { getCurrentUserEmail } from '@/lib/auth/session';
 import { supabaseServer } from '@/lib/supabase/server';
+import { logActivity } from '@/lib/activity/log-activity';
 import type { AddressBookFormInput } from './types';
 
 type ActionResult = {
@@ -97,6 +98,16 @@ export async function saveAddressBookEntry(input: AddressBookFormInput): Promise
         };
       }
 
+      const activity = await logActivity({
+        actionType: 'ADDRESS_BOOK_ENTRY_UPDATED',
+        module: 'address_book',
+        recordId: id,
+        recordLabel: payload.company_name,
+        actor: currentUserEmail || 'unknown',
+        after: payload,
+      });
+      if (!activity.ok) console.warn('Address book update activity logging failed.', activity.message);
+
       revalidatePath('/address-book');
       revalidatePath('/delivery');
 
@@ -114,6 +125,15 @@ export async function saveAddressBookEntry(input: AddressBookFormInput): Promise
         message: `Address save failed: ${error.message}`,
       };
     }
+
+    const activity = await logActivity({
+      actionType: 'ADDRESS_BOOK_ENTRY_CREATED',
+      module: 'address_book',
+      recordLabel: payload.company_name,
+      actor: currentUserEmail || 'unknown',
+      after: payload,
+    });
+    if (!activity.ok) console.warn('Address book create activity logging failed.', activity.message);
 
     revalidatePath('/address-book');
     revalidatePath('/delivery');
@@ -145,6 +165,16 @@ export async function deactivateAddressBookEntry(id: string): Promise<ActionResu
 
     const supabase = await supabaseServer();
 
+    const { data: current, error: currentError } = await supabase
+      .from('address_book')
+      .select('id,company_name,is_active')
+      .eq('id', cleanId)
+      .maybeSingle();
+
+    if (currentError) {
+      return { ok: false, message: `Address lookup failed: ${currentError.message}` };
+    }
+
     const { error } = await supabase
       .from('address_book')
       .update({ is_active: false })
@@ -156,6 +186,16 @@ export async function deactivateAddressBookEntry(id: string): Promise<ActionResu
         message: `Address archive failed: ${error.message}`,
       };
     }
+
+    const activity = await logActivity({
+      actionType: 'ADDRESS_BOOK_ENTRY_ARCHIVED',
+      module: 'address_book',
+      recordId: cleanId,
+      recordLabel: current?.company_name || cleanId,
+      before: current || null,
+      after: { is_active: false },
+    });
+    if (!activity.ok) console.warn('Address book archive activity logging failed.', activity.message);
 
     revalidatePath('/address-book');
     revalidatePath('/delivery');
@@ -187,6 +227,16 @@ export async function reactivateAddressBookEntry(id: string): Promise<ActionResu
 
     const supabase = await supabaseServer();
 
+    const { data: current, error: currentError } = await supabase
+      .from('address_book')
+      .select('id,company_name,is_active')
+      .eq('id', cleanId)
+      .maybeSingle();
+
+    if (currentError) {
+      return { ok: false, message: `Address lookup failed: ${currentError.message}` };
+    }
+
     const { error } = await supabase
       .from('address_book')
       .update({ is_active: true })
@@ -198,6 +248,16 @@ export async function reactivateAddressBookEntry(id: string): Promise<ActionResu
         message: `Address restore failed: ${error.message}`,
       };
     }
+
+    const activity = await logActivity({
+      actionType: 'ADDRESS_BOOK_ENTRY_RESTORED',
+      module: 'address_book',
+      recordId: cleanId,
+      recordLabel: current?.company_name || cleanId,
+      before: current || null,
+      after: { is_active: true },
+    });
+    if (!activity.ok) console.warn('Address book restore activity logging failed.', activity.message);
 
     revalidatePath('/address-book');
     revalidatePath('/delivery');

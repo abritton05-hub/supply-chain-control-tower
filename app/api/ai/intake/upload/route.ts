@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
+import { logActivity } from '@/lib/activity/log-activity';
 
 export const runtime = 'nodejs';
 
@@ -24,9 +25,20 @@ export async function POST(req: Request) {
         });
       }
 
+      const documentId = `text-${Date.now()}`;
+      const activity = await logActivity({
+        actionType: 'AI_INTAKE_DRAFT_CREATED',
+        module: 'ai_intake',
+        recordId: documentId,
+        recordLabel: 'text intake',
+        actor: profile.email || profile.full_name || 'unknown',
+        details: { source_type: 'text' },
+      });
+      if (!activity.ok) console.warn('AI intake draft create logging failed.', activity.message);
+
       return NextResponse.json({
         ok: true,
-        document_id: `text-${Date.now()}`,
+        document_id: documentId,
         source: {
           source_type: 'text',
           raw_text: rawText,
@@ -48,9 +60,20 @@ export async function POST(req: Request) {
     }
 
     if (!file && rawText) {
+      const documentId = `text-${Date.now()}`;
+      const activity = await logActivity({
+        actionType: 'AI_INTAKE_DRAFT_CREATED',
+        module: 'ai_intake',
+        recordId: documentId,
+        recordLabel: 'text intake',
+        actor: profile.email || profile.full_name || 'unknown',
+        details: { source_type: 'text' },
+      });
+      if (!activity.ok) console.warn('AI intake draft create logging failed.', activity.message);
+
       return NextResponse.json({
         ok: true,
-        document_id: `text-${Date.now()}`,
+        document_id: documentId,
         source: {
           source_type: 'text',
           raw_text: rawText,
@@ -91,9 +114,20 @@ export async function POST(req: Request) {
     const buffer = await file.arrayBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
 
+    const documentId = `file-${Date.now()}`;
+    const activity = await logActivity({
+      actionType: 'AI_INTAKE_DRAFT_CREATED',
+      module: 'ai_intake',
+      recordId: documentId,
+      recordLabel: file.name || 'uploaded intake file',
+      actor: profile.email || profile.full_name || 'unknown',
+      details: { source_type: mime === 'application/pdf' ? 'pdf' : 'image', mime_type: file.type || null },
+    });
+    if (!activity.ok) console.warn('AI intake draft create logging failed.', activity.message);
+
     return NextResponse.json({
       ok: true,
-      document_id: `file-${Date.now()}`,
+      document_id: documentId,
       source: {
         source_type: mime === 'application/pdf' ? 'pdf' : 'image',
         file_base64: base64,

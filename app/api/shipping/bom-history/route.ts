@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { canManageDelivery } from '@/lib/auth/roles';
 import { logTransaction } from '@/lib/transactions/log-transaction';
+import { logActivity } from '@/lib/activity/log-activity';
 
 export const runtime = 'nodejs';
 
@@ -128,6 +129,114 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : 'Save failed.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const body = await request.json();
+    const id = cleanText(body.id);
+
+    if (!id) {
+      return NextResponse.json({ ok: false, message: 'id is required.' }, { status: 400 });
+    }
+
+    const { id: _id, ...payload } = body;
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/shipping_bom_history?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ ...payload, updated_at: new Date().toISOString() }),
+      }
+    );
+
+    const data = await res.json();
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, message: data.message || 'Update failed.' }, { status: res.status });
+    }
+
+    const row = data?.[0] ?? null;
+    const activity = await logActivity({
+      actionType: 'DELIVERY_RECEIPT_UPDATED',
+      module: 'delivery_receipt',
+      recordId: id,
+      recordLabel: cleanText(payload.bom_number) || id,
+      referenceNumber: cleanText(payload.manifest_number),
+      details: payload,
+    });
+
+    if (!activity.ok) {
+      console.warn('Delivery receipt update logging failed.', activity.message);
+    }
+
+    return NextResponse.json({ ok: true, row });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Update failed.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const { searchParams } = new URL(request.url);
+    const id = cleanText(searchParams.get('id'));
+    const bomNumber = cleanText(searchParams.get('bom_number'));
+
+    if (!id && !bomNumber) {
+      return NextResponse.json({ ok: false, message: 'id or bom_number is required.' }, { status: 400 });
+    }
+
+    const where = id
+      ? `id=eq.${encodeURIComponent(id)}`
+      : `bom_number=eq.${encodeURIComponent(bomNumber)}`;
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/shipping_bom_history?${where}`,
+      {
+        method: 'DELETE',
+        headers: headers(),
+      }
+    );
+
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch {}
+
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, message: data?.message || 'Delete failed.' }, { status: res.status });
+    }
+
+    const activity = await logActivity({
+      actionType: 'DELIVERY_RECEIPT_ARCHIVED',
+      module: 'delivery_receipt',
+      recordId: id || bomNumber,
+      recordLabel: bomNumber || id,
+    });
+
+    if (!activity.ok) {
+      console.warn('Delivery receipt delete logging failed.', activity.message);
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Delete failed.' },
       { status: 500 }
     );
   }

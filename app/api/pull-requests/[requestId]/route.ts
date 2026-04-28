@@ -5,6 +5,7 @@ import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { getCurrentUserEmail } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { logTransaction } from '@/lib/transactions/log-transaction';
+import { logActivity } from '@/lib/activity/log-activity';
 
 type UpdatePullRequestBody = {
   status?: string;
@@ -137,6 +138,19 @@ export async function PATCH(
       });
     }
 
+    const activity = await logActivity({
+      actionType: 'PULL_REQUEST_REJECTED_CANCELLED',
+      module: 'pull_request',
+      recordId: requestId,
+      recordLabel: updateResult.data.request_number || requestId,
+      actor: performedBy,
+      details: { previous_status: existing.status, next_status: updateResult.data.status },
+    });
+
+    if (!activity.ok) {
+      console.warn('Pull request status activity logging failed', activity.message);
+    }
+
     revalidatePath('/pull-requests');
     revalidatePath(`/pull-requests/${requestId}`);
     revalidatePath('/transactions');
@@ -152,6 +166,68 @@ export async function PATCH(
       {
         ok: false,
         message: error instanceof Error ? error.message : 'Failed to close pull request.',
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+export async function DELETE(
+  _request: Request,
+  {
+    params,
+  }: {
+    params: { requestId: string };
+  }
+) {
+  try {
+    const profile = await getCurrentUserProfile();
+
+    if (!canFulfillPullRequests(profile.role)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: 'Only warehouse and admin users can delete pull requests.',
+        },
+        { status: 403 }
+      );
+    }
+
+    const requestId = clean(params.requestId);
+    if (!requestId) {
+      return NextResponse.json({ ok: false, message: 'Request ID is required.' }, { status: 400 });
+    }
+
+    const supabase = await supabaseAdmin();
+    await supabase.from('pull_request_lines').delete().eq('request_id', requestId);
+    const { error } = await supabase.from('pull_requests').delete().eq('id', requestId);
+
+    if (error) {
+      return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
+    }
+
+    const activity = await logActivity({
+      actionType: 'PULL_REQUEST_ARCHIVED',
+      module: 'pull_request',
+      recordId: requestId,
+      recordLabel: requestId,
+      actor: profile.email || profile.full_name || 'unknown',
+    });
+
+    if (!activity.ok) {
+      console.warn('Pull request delete logging failed', activity.message);
+    }
+
+    revalidatePath('/pull-requests');
+    revalidatePath('/transactions');
+
+    return NextResponse.json({ ok: true, message: 'Pull request deleted.' });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Failed to delete pull request.',
       },
       { status: 500 }
     );
