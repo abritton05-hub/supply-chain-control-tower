@@ -144,6 +144,15 @@ function isMissingBoxCountColumn(data: unknown) {
   return message.includes('box_count') || message.includes('PGRST204');
 }
 
+function isMissingRelation(data: unknown, relation: string) {
+  if (!isObject(data)) return false;
+  const message = [data.message, data.details, data.hint, data.code]
+    .map((value) => (typeof value === 'string' ? value : ''))
+    .join(' ')
+    .toLowerCase();
+  return message.includes(relation.toLowerCase()) && message.includes('does not exist');
+}
+
 async function writeManifestRow(
   method: 'POST' | 'PATCH',
   payload: JsonObject,
@@ -223,6 +232,9 @@ async function replaceStopItems(stopId: string, rawItems: unknown[]) {
   const deleteData = await readJson(deleteRes);
 
   if (!deleteRes.ok) {
+    if (isMissingRelation(deleteData, 'delivery_stop_items')) {
+      return { ok: true, rows: [] };
+    }
     return {
       ok: false,
       status: deleteRes.status,
@@ -246,6 +258,9 @@ async function replaceStopItems(stopId: string, rawItems: unknown[]) {
   const insertData = await readJson(insertRes);
 
   if (!insertRes.ok) {
+    if (isMissingRelation(insertData, 'delivery_stop_items')) {
+      return { ok: true, rows: [] };
+    }
     return {
       ok: false,
       status: insertRes.status,
@@ -272,6 +287,9 @@ async function deleteStopItems(stopIds: string[]) {
   const data = await readJson(res);
 
   if (!res.ok) {
+    if (isMissingRelation(data, 'delivery_stop_items')) {
+      return { ok: true, status: 200 };
+    }
     return {
       ok: false,
       status: res.status,
