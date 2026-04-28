@@ -8,7 +8,7 @@ import { DELIVERY_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
 import type { DeliveryDraftPayload } from '@/lib/ai/intake/types';
 import {
   buildShippingManifestLabelPayload,
-  downloadLabelPayloadsCsv
+  downloadPtouchLabelsCsv
 } from '@/lib/labels/p-touch';
 import type { DeliveryPageData } from './types';
 
@@ -2089,7 +2089,7 @@ export function DeliveryClient({
       setLoadingLabel('Saving manifest stop...');
       await saveManifestRow(rowToSave, 'PATCH');
       if (shouldExportLabels) {
-        downloadLabelPayloadsCsv(labelPayloads, `${manifestNumber}-${rowToSave.id}-labels`);
+        downloadPtouchLabelsCsv(labelPayloads);
       }
       await refreshData();
       setSelectedRow(null);
@@ -2203,7 +2203,7 @@ export function DeliveryClient({
       return;
     }
 
-    downloadLabelPayloadsCsv(labelPayloads, `${row.manifestNumber || 'manifest'}-${row.id}-labels`);
+    downloadPtouchLabelsCsv(labelPayloads);
     setMessage(`${labelPayloads.length} label record(s) exported for ${row.manifestNumber || row.id}.`);
   }
 
@@ -2215,7 +2215,7 @@ export function DeliveryClient({
       return;
     }
 
-    downloadLabelPayloadsCsv(labelPayloads, `${manifestNumber}-labels`);
+    downloadPtouchLabelsCsv(labelPayloads);
     setMessage(`${labelPayloads.length} label record(s) exported for manifest ${manifestNumber}.`);
   }
 

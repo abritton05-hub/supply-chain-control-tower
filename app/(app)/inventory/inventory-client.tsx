@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PrintInventoryTagButton, PrintLocationLabelButton } from '@/components/label-print-buttons';
+import { buildInventoryItemLabelPayload, downloadPtouchLabelsCsv } from '@/lib/labels/p-touch';
 import { ScanCameraButton } from '@/components/scan-camera-button';
 import { parseScctBarcodePayload } from '@/lib/barcodes/scct-payload';
 import type { InventoryRecord } from './types';
@@ -231,6 +232,22 @@ export function InventoryClient({
     setQuickAdjustMessage('');
   }
 
+  function exportPtouchLabels() {
+    const labels = filteredInventory.map((item) =>
+      buildInventoryItemLabelPayload({
+        itemId: item.item_id,
+        partNumber: item.part_number,
+        description: item.description,
+        quantity: item.qty_on_hand,
+        location: normalizeSite(item.site || item.location),
+        binLocation: item.bin_location,
+        reference: item.item_id,
+      })
+    );
+
+    downloadPtouchLabelsCsv(labels);
+  }
+
   async function submitQuickAdjust() {
     if (!quickAdjustItem) return;
 
@@ -339,6 +356,14 @@ export function InventoryClient({
                 Clear
               </button>
             ) : null}
+
+            <button
+              type="button"
+              onClick={exportPtouchLabels}
+              className="rounded-md border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:py-2"
+            >
+              Export P-touch Labels
+            </button>
           </div>
         </div>
       </div>
