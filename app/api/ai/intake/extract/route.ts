@@ -41,12 +41,14 @@ function extractEmail(text: string) {
 
 function extractPocName(text: string) {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const explicitPocLine = lines.find((line) => /\b(poc|point of contact|contact)\b/i.test(line));
+  const explicitPocLine = lines.find((line) =>
+    /\b(poc|point of contact|contact|receiver)\b/i.test(line)
+  );
 
   if (!explicitPocLine) return '';
 
   const afterLabel = explicitPocLine
-    .replace(/^.*?\b(?:poc|point of contact|contact)\b\s*[:\-]?\s*/i, '')
+    .replace(/^.*?\b(?:poc|point of contact|contact|receiver)\b\s*[:\-]?\s*/i, '')
     .replace(/[<({].*$/, '')
     .replace(/\b(please|schedule|pickup|pick up|deliver|delivery).*$/i, '')
     .trim();
@@ -55,20 +57,37 @@ function extractPocName(text: string) {
   return nameMatch?.[1]?.trim() || '';
 }
 
+function extractPhone(text: string) {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const phoneLine = lines.find((line) => /\b(phone|tel|cell|mobile)\b/i.test(line)) || '';
+  const scopedMatch = phoneLine.match(
+    /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/
+  );
+  if (scopedMatch?.[0]) return scopedMatch[0];
+
+  return text.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)?.[0] || '';
+}
+
 function extractLocations(text: string) {
   const lower = text.toLowerCase();
+  const fromToMatch =
+    text.match(
+      /pick\s*up\s+from\s+(?:the\s+)?(.+?)\s+(?:and\s+)?(?:deliver|drop(?:\s*off)?)\s+to\s+(.+?)(?:[.!?]|\r?\n|$)/i
+    ) ||
+    text.match(/from\s+(?:the\s+)?(.+?)\s+to\s+(.+?)(?:[.!?]|\r?\n|$)/i);
 
   const fromLocation =
-    text.match(/pick\s*up\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
-    text.match(/pickup\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
-    text.match(/\bfrom\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
+    fromToMatch?.[1] ||
+    text.match(/pick\s*up\s+from\s+(?:the\s+)?(.+?)(?:[.!?]|\r?\n|$)/i)?.[1] ||
+    text.match(/\bfrom\s+(?:the\s+)?(.+?)(?:[.!?]|\r?\n|$)/i)?.[1] ||
     '';
 
   const toLocation =
-    text.match(/taken\s+directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/deliver\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/\bto\s+([a-z0-9-]+)/i)?.[1] ||
+    fromToMatch?.[2] ||
+    text.match(/taken\s+directly\s+to\s+(.+?)(?:[.!?]|\r?\n|$)/i)?.[1] ||
+    text.match(/directly\s+to\s+(.+?)(?:[.!?]|\r?\n|$)/i)?.[1] ||
+    text.match(/deliver\s+to\s+(.+?)(?:[.!?]|\r?\n|$)/i)?.[1] ||
+    text.match(/\bto\s+(.+?)(?:[.!?]|\r?\n|$)/i)?.[1] ||
     '';
 
   const isPickup =
@@ -115,28 +134,32 @@ function extractLineItems(text: string): ExtractedLineItem[] {
   const items: ExtractedLineItem[] = [];
   const seen = new Set<string>();
 
-  const patterns = [
-    /\bqty\s*(\d+)\s+(?:of\s+)?(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
-    /\b(\d+)\s*(?:pcs|pc|pieces|piece|ea|each|x)\s+(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
-  ];
+  const linePattern =
+    /^(?:qty\s*)?(\d+)(?:[ \t]*(?:pcs|pc|pieces|piece|ea|each|x))?[ \t]+(?:of[ \t]+)?(?:PN[ \t]*#?[ \t]*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:[ \t]+(.*))?$/i;
 
-  for (const pattern of patterns) {
-    for (const match of Array.from(text.matchAll(pattern))) {
-      const qty = Number(match[1]) || 1;
-      const partNumber = match[2].replace(/[,.]$/, '').toUpperCase();
-      const description = (match[3] || '').trim();
-      const key = `${qty}-${partNumber}-${description}`;
+  const lines = text.split(/\r?\n/);
 
-      if (seen.has(key)) continue;
-      seen.add(key);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
 
-      items.push({
-        qty,
-        part_number: partNumber,
-        description,
-        uom: 'EA',
-      });
-    }
+    const match = line.match(linePattern);
+    if (!match) continue;
+
+    const qty = Number(match[1]) || 1;
+    const partNumber = match[2].replace(/[,.]$/, '').toUpperCase();
+    const description = (match[3] || '').trim();
+    const key = `${qty}-${partNumber}-${description}`;
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    items.push({
+      qty,
+      part_number: partNumber,
+      description,
+      uom: 'EA',
+    });
   }
 
   return items;
@@ -206,6 +229,7 @@ export async function POST(request: Request) {
           pickup_location: locations.pickup_location,
           dropoff_location: locations.dropoff_location,
           contact_name: extractPocName(rawText),
+          contact_phone: extractPhone(rawText),
           contact_email: extractEmail(rawText),
           requested_date: '',
           requested_time: extractRequestedTime(rawText, locations.pickup_location),

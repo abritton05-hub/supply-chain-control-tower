@@ -643,6 +643,29 @@ async function completeManifest(manifestNumber: string, manifestDate: string) {
   return data as { stopCount?: number; message?: string };
 }
 
+async function deleteManifestStop(stopId: string) {
+  const params = new URLSearchParams({ id: stopId });
+  const res = await fetch(`/api/shipping/manifest-history?${params.toString()}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete manifest stop.');
+  return data as { deleted_count?: number; message?: string };
+}
+
+async function deleteManifestRecord(manifestNumber: string, manifestDate: string) {
+  const params = new URLSearchParams({
+    manifest_number: manifestNumber,
+    manifest_date: manifestDate,
+  });
+  const res = await fetch(`/api/shipping/manifest-history?${params.toString()}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete manifest record.');
+  return data as { deleted_count?: number; message?: string };
+}
+
 async function saveBomRow(bom: BomDraft) {
   const res = await fetch('/api/shipping/bom-history', {
     method: 'POST',
@@ -1625,6 +1648,7 @@ function StopsTable({
   onPrintLabels,
   onCreateBom,
   onMarkComplete,
+  onDelete,
   readOnly = false,
 }: {
   rows: StopRow[];
@@ -1634,6 +1658,7 @@ function StopsTable({
   onPrintLabels?: (row: StopRow) => void;
   onCreateBom?: (row: StopRow) => void;
   onMarkComplete?: (row: StopRow) => void;
+  onDelete?: (row: StopRow) => void;
   readOnly?: boolean;
 }) {
   const isManifest = mode === 'manifest';
@@ -1722,6 +1747,15 @@ function StopsTable({
                             className="erp-action-secondary"
                           >
                             {stopStatusIsComplete(row.status) ? 'Complete' : 'Mark Complete'}
+                          </button>
+                        ) : null}
+                        {onDelete ? (
+                          <button
+                            type="button"
+                            onClick={() => onDelete(row)}
+                            className="erp-action-danger"
+                          >
+                            Remove
                           </button>
                         ) : null}
                       </div>
@@ -1822,7 +1856,11 @@ export function DeliveryClient({
 
       const requestedDate = clean(draft.requested_date) || selectedManifestDate || today();
       const direction: Direction = draft.direction === 'pickup' ? 'incoming' : 'outgoing';
-      const manifestNumber = manifestNumberForDate(requestedDate, activeRows, rows);
+      const manifestNumber = manifestNumberForDate(
+        requestedDate,
+        activeManifestRows(rows),
+        rows
+      );
       const baseRow = emptyStop(direction, manifestNumber, requestedDate, locations);
 
       const pickupLocation = clean(draft.pickup_location);
@@ -1870,7 +1908,7 @@ export function DeliveryClient({
       window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
       setIntakeDraftApplied(true);
     }
-  }, [activeRows, dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
+  }, [dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
 
   useEffect(() => {
     if (initialManifestFocusApplied || !focusedManifestNumber || !rows.length) return;
@@ -2243,6 +2281,33 @@ export function DeliveryClient({
     }
   }
 
+  async function handleDeleteStop(row: StopRow) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete this ${formatType(row.direction)} stop? This removes it from the active manifest view.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Deleting manifest stop...');
+      const result = await deleteManifestStop(row.id);
+      await refreshData();
+      setSelectedRow(null);
+      setMessage(result.message || `${formatType(row.direction)} stop deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete stop.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
   async function handleMarkManifestComplete(
     manifestNumber: string,
     manifestDate: string,
@@ -2285,6 +2350,33 @@ export function DeliveryClient({
     setSelectedManifestNumber(manifestNumber);
     setSelectedRow(null);
     setMessage(`Opened manifest ${manifestNumber}.`);
+  }
+
+  async function handleDeleteManifestRecord(manifestNumber: string, manifestDate: string) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Delete manifest ${manifestNumber} for ${manifestDate}? This removes its receipt/history records from active lists.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Deleting manifest record...');
+      const result = await deleteManifestRecord(manifestNumber, manifestDate);
+      await refreshData();
+      setSelectedRow(null);
+      setSelectedManifestNumber('');
+      setMessage(result.message || `Manifest ${manifestNumber} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete manifest record.');
+    } finally {
+      setLoadingLabel('');
+    }
   }
 
   async function saveSelectedManifest() {
@@ -2401,6 +2493,7 @@ export function DeliveryClient({
             onOpen={setSelectedRow}
             onPrintLabels={handlePrintStopLabels}
             onMarkComplete={handleMarkStopComplete}
+            onDelete={handleDeleteStop}
           />
         </section>
 
@@ -2414,6 +2507,7 @@ export function DeliveryClient({
             onPrintLabels={handlePrintStopLabels}
             onCreateBom={handleCreateBom}
             onMarkComplete={handleMarkStopComplete}
+            onDelete={handleDeleteStop}
           />
         </section>
       </div>
@@ -2512,6 +2606,13 @@ export function DeliveryClient({
                             Print Labels
                           </button>
                         ) : null}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteManifestRecord(manifestNumber, date)}
+                          className="erp-action-danger"
+                        >
+                          Delete
+                        </button>
                       </div>
 
                       <PrintableManifest
