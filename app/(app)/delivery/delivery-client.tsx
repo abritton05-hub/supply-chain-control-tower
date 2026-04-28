@@ -677,32 +677,33 @@ function printElementById(id: string) {
         <title>Print</title>
         <style>
           * { box-sizing: border-box; }
-          body { font-family: Arial, sans-serif; color: #0f172a; padding: 24px; }
+          @page { size: auto; margin: 10mm; }
+          body { font-family: Arial, sans-serif; color: #0f172a; padding: 12px; font-size: 10px; line-height: 1.25; }
           h1, h2, h3, p { margin: 0; }
-          .document { max-width: 980px; margin: 0 auto; }
-          .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 3px solid #0f172a; padding-bottom: 14px; margin-bottom: 16px; }
-          .logo { width: 190px; height: auto; object-fit: contain; }
+          .document { max-width: 860px; margin: 0 auto; page-break-inside: avoid; }
+          .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 10px; }
+          .logo { width: 125px; height: auto; object-fit: contain; }
           .title-block { text-align: right; }
-          .title-block h1 { font-size: 26px; letter-spacing: 0.02em; }
-          .title-block p { margin-top: 6px; font-size: 12px; }
-          .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
-          .meta-cell { border: 1px solid #cbd5e1; padding: 8px; min-height: 48px; }
+          .title-block h1 { font-size: 18px; letter-spacing: 0.02em; }
+          .title-block p { margin-top: 3px; font-size: 10px; }
+          .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+          .meta-cell { border: 1px solid #cbd5e1; padding: 6px; min-height: 36px; }
           .label { font-size: 10px; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.05em; }
-          .value { margin-top: 4px; font-size: 12px; font-weight: 700; white-space: pre-wrap; }
-          table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-          th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; font-size: 11px; }
-          th { background: #f1f5f9; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
-          pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 11px; margin: 0; }
-          .item-lines { display: grid; gap: 3px; min-width: 260px; }
-          .item-line { display: grid; grid-template-columns: 34px 92px minmax(120px, 1fr) 42px; gap: 4px; border-bottom: 1px solid #e2e8f0; padding: 2px 0; }
+          .value { margin-top: 2px; font-size: 10px; font-weight: 700; white-space: pre-wrap; }
+          table { width: 100%; border-collapse: collapse; margin-top: 8px; page-break-inside: avoid; }
+          th, td { border: 1px solid #cbd5e1; padding: 4px 5px; text-align: left; vertical-align: top; font-size: 9px; }
+          th { background: #f1f5f9; text-transform: uppercase; font-size: 8px; letter-spacing: 0.03em; }
+          pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 9px; margin: 0; }
+          .item-lines { display: grid; gap: 2px; min-width: 200px; }
+          .item-line { display: grid; grid-template-columns: 26px 78px minmax(80px, 1fr) 34px; gap: 3px; border-bottom: 1px solid #e2e8f0; padding: 1px 0; }
           .item-line:last-child { border-bottom: 0; }
-          .item-head { color: #475569; font-size: 9px; font-weight: 800; text-transform: uppercase; }
-          .box { border: 1px solid #cbd5e1; padding: 10px; margin-top: 12px; }
-          .box-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 6px; }
-          .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
-          .signature-label { font-size: 12px; font-weight: 800; }
-          .signature-line { border-bottom: 1px solid #0f172a; height: 32px; margin-top: 8px; }
-          @media print { body { padding: 18px; } .document { max-width: none; } .logo { width: 175px; } }
+          .item-head { color: #475569; font-size: 8px; font-weight: 800; text-transform: uppercase; }
+          .box { border: 1px solid #cbd5e1; padding: 6px; margin-top: 8px; }
+          .box-title { font-size: 9px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 4px; }
+          .signature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; page-break-inside: avoid; }
+          .signature-label { font-size: 9px; font-weight: 800; }
+          .signature-line { border-bottom: 1px solid #0f172a; height: 20px; margin-top: 4px; }
+          @media print { body { padding: 8px; } .document { max-width: none; } .logo { width: 115px; } }
         </style>
       </head>
       <body>${element.innerHTML}</body>
@@ -1428,51 +1429,43 @@ function PrintableManifest({
   printId: string;
   rows: StopRow[];
 }) {
+  const primaryRow = rows[0];
+  const fromText = primaryRow ? displayStopAddress(primaryRow.fromLocation, primaryRow.fromAddress) : '-';
+  const toText = primaryRow ? displayStopAddress(primaryRow.toLocation, primaryRow.toAddress) : '-';
+
   return (
     <div id={printId} className="hidden">
       <div className="document">
         <div className="header">
-          <Image
-            src={DENALI_LOGO_SRC}
-            alt="Denali Advanced Integration"
-            width={190}
-            height={64}
-            className="logo"
-            unoptimized
-          />
           <div className="title-block">
-            <h1>Driver Manifest</h1>
-            <p>Manifest #: {manifestNumber}</p>
+            <h1>Delivery Receipt</h1>
+            <p>Receipt #: {manifestNumber}</p>
             <p>Date: {manifestDate || '-'}</p>
           </div>
+        </div>
+
+        <div className="meta">
+          <MetaCell label="From" value={fromText} />
+          <MetaCell label="To" value={toText} />
+          <MetaCell
+            label="PO / Reference"
+            value={rows.map((row) => row.shipmentTransferId || row.reference).filter(Boolean).join('\n') || '-'}
+          />
+          <MetaCell label="Line Item Count" value={String(rows.reduce((sum, row) => sum + printableStopLines(row).length, 0))} />
         </div>
 
         <table>
           <thead>
             <tr>
-              <th>Stop</th>
-              <th>Type</th>
-              <th>Date</th>
-              <th>From</th>
-              <th>To</th>
+              <th>#</th>
               <th>PO / Ref</th>
-              <th>Items</th>
-              <th>Contact</th>
-              <th>Status</th>
+              <th>Line Items</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row, index) => (
               <tr key={`print-row-${row.id}`}>
                 <td>{index + 1}</td>
-                <td>{formatType(row.direction)}</td>
-                <td>{row.date || '-'}</td>
-                <td>
-                  <pre>{displayStopAddress(row.fromLocation, row.fromAddress)}</pre>
-                </td>
-                <td>
-                  <pre>{displayStopAddress(row.toLocation, row.toAddress)}</pre>
-                </td>
                 <td>
                   {row.shipmentTransferId || '-'}
                   {row.reference ? (
@@ -1485,14 +1478,12 @@ function PrintableManifest({
                 <td>
                   <PrintableItemLines lines={printableStopLines(row)} />
                 </td>
-                <td>{row.contact || '-'}</td>
-                <td>{displayStopStatus(row.status)}</td>
               </tr>
             ))}
           </tbody>
         </table>
 
-        <SignatureGrid />
+        <ReceiptSignatureGrid />
       </div>
     </div>
   );
@@ -1524,6 +1515,25 @@ function SignatureGrid() {
       </div>
       <div>
         <div className="signature-label">Signature</div>
+        <div className="signature-line" />
+      </div>
+    </div>
+  );
+}
+
+function ReceiptSignatureGrid() {
+  return (
+    <div className="signature-grid">
+      <div>
+        <div className="signature-label">Received By</div>
+        <div className="signature-line" />
+      </div>
+      <div>
+        <div className="signature-label">Signature</div>
+        <div className="signature-line" />
+      </div>
+      <div>
+        <div className="signature-label">Date / Time</div>
         <div className="signature-line" />
       </div>
     </div>
