@@ -154,6 +154,10 @@ export function AddressBookClient({ entries }: AddressBookClientProps) {
   }
 
   function handleArchive(id: string) {
+    if (!window.confirm('Archive this address entry? It will be removed from active lists and dropdowns.')) {
+      return;
+    }
+
     setMessage('');
 
     startTransition(async () => {
@@ -322,7 +326,7 @@ export function AddressBookClient({ entries }: AddressBookClientProps) {
                             disabled={isPending}
                             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                           >
-                            Archive
+                            Delete (Archive)
                           </button>
                         ) : (
                           <button

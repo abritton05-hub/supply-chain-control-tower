@@ -9,7 +9,14 @@ import {
 
 export const runtime = 'nodejs';
 
-type Workflow = 'receiving' | 'pull_request' | 'delivery';
+type Workflow =
+  | 'receiving'
+  | 'pull_request'
+  | 'delivery'
+  | 'pickup'
+  | 'pickup_delivery'
+  | 'manifest'
+  | 'delivery_receipt';
 
 type ExtractedLineItem = {
   part_number: string;
@@ -41,34 +48,56 @@ function extractEmail(text: string) {
 
 function extractPocName(text: string) {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const explicitPocLine = lines.find((line) => /\b(poc|point of contact|contact)\b/i.test(line));
+  const explicitPocLine = lines.find((line) =>
+    /\b(receiver|poc|point of contact|contact)\b/i.test(line)
+  );
 
   if (!explicitPocLine) return '';
 
   const afterLabel = explicitPocLine
-    .replace(/^.*?\b(?:poc|point of contact|contact)\b\s*[:\-]?\s*/i, '')
+    .replace(/^.*?\b(?:receiver|poc|point of contact|contact)\b\s*[:\-]?\s*/i, '')
     .replace(/[<({].*$/, '')
     .replace(/\b(please|schedule|pickup|pick up|deliver|delivery).*$/i, '')
     .trim();
 
   const nameMatch = afterLabel.match(/^@?([a-z]+(?:\s+[a-z]+){0,2})/i);
-  return nameMatch?.[1]?.trim() || '';
+  const name = nameMatch?.[1]?.trim() || '';
+
+  if (!name) return '';
+  if (/^(team|warehouse|driver|dispatch|shipping|receiving)$/i.test(name)) return '';
+
+  return name;
+}
+
+function extractPhone(text: string) {
+  return (
+    text.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)?.[0] ||
+    text.match(/\b\d{3}[-.\s]?\d{4}\b/)?.[0] ||
+    ''
+  );
+}
+
+function extractLocationPhrase(text: string, pattern: RegExp) {
+  const match = text.match(pattern);
+  const candidate = match?.[1]?.trim() || '';
+  if (!candidate) return '';
+  return normalizeLocation(candidate.replace(/\s+/g, ' ').replace(/[.,;:]$/, ''));
 }
 
 function extractLocations(text: string) {
   const lower = text.toLowerCase();
 
   const fromLocation =
-    text.match(/pick\s*up\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
-    text.match(/pickup\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
-    text.match(/\bfrom\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
+    extractLocationPhrase(text, /pick\s*up\s+from\s+(?:the\s+)?([a-z0-9][a-z0-9\s/-]*?)(?=\s+(?:and\s+deliver|to)\b|[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /pickup\s+from\s+(?:the\s+)?([a-z0-9][a-z0-9\s/-]*?)(?=\s+(?:and\s+deliver|to)\b|[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /\bfrom\s+(?:the\s+)?([a-z0-9][a-z0-9\s/-]*?)(?=\s+(?:to|and)\b|[.,;\n\r]|$)/i) ||
     '';
 
   const toLocation =
-    text.match(/taken\s+directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/deliver\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/\bto\s+([a-z0-9-]+)/i)?.[1] ||
+    extractLocationPhrase(text, /taken\s+directly\s+to\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /directly\s+to\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /deliver\s+to\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /\bto\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
     '';
 
   const isPickup =
@@ -76,8 +105,8 @@ function extractLocations(text: string) {
     lower.includes('pick up') ||
     Boolean(fromLocation && toLocation);
 
-  const pickupLocation = fromLocation ? normalizeLocation(fromLocation) : 'WH';
-  const dropoffLocation = toLocation ? normalizeLocation(toLocation) : 'SEA991';
+  const pickupLocation = fromLocation || 'WH';
+  const dropoffLocation = toLocation || 'SEA991';
 
   return {
     direction: isPickup ? 'incoming' : 'outgoing',
@@ -116,8 +145,8 @@ function extractLineItems(text: string): ExtractedLineItem[] {
   const seen = new Set<string>();
 
   const patterns = [
-    /\bqty\s*(\d+)\s+(?:of\s+)?(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
-    /\b(\d+)\s*(?:pcs|pc|pieces|piece|ea|each|x)\s+(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
+    /\bqty\s*(\d+)\s+(?:of\s+)?(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:[ \t]+([^\r\n]+))?/gi,
+    /\b(\d+)\s*(?:pcs|pc|pieces|piece|ea|each|x)\s+(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:[ \t]+([^\r\n]+))?/gi,
   ];
 
   for (const pattern of patterns) {
@@ -140,6 +169,16 @@ function extractLineItems(text: string): ExtractedLineItem[] {
   }
 
   return items;
+}
+
+function isDeliveryWorkflow(workflow: Workflow) {
+  return (
+    workflow === 'delivery' ||
+    workflow === 'pickup' ||
+    workflow === 'pickup_delivery' ||
+    workflow === 'manifest' ||
+    workflow === 'delivery_receipt'
+  );
 }
 
 function canUseWorkflow(role: AppRole, workflow: Workflow) {
@@ -177,7 +216,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, message: 'document_id is required.' }, { status: 400 });
     }
 
-    if (workflow !== 'delivery') {
+    if (!isDeliveryWorkflow(workflow)) {
       return NextResponse.json({
         ok: true,
         extraction: {
@@ -195,6 +234,7 @@ export async function POST(request: Request) {
     const locations = extractLocations(rawText);
     const lineItems = extractLineItems(rawText);
     const poNumber = extractPoNumber(rawText);
+    const hasLowConfidence = !lineItems.length || !locations.pickup_location || !locations.dropoff_location;
 
     return NextResponse.json({
       ok: true,
@@ -205,7 +245,10 @@ export async function POST(request: Request) {
           company_name: '',
           pickup_location: locations.pickup_location,
           dropoff_location: locations.dropoff_location,
+          ship_from: locations.pickup_location,
+          ship_to: locations.dropoff_location,
           contact_name: extractPocName(rawText),
+          contact_phone: extractPhone(rawText),
           contact_email: extractEmail(rawText),
           requested_date: '',
           requested_time: extractRequestedTime(rawText, locations.pickup_location),
@@ -215,9 +258,16 @@ export async function POST(request: Request) {
           notes: rawText,
         },
         line_items: lineItems,
-        confidence: {},
+        confidence: hasLowConfidence
+          ? { extraction: 0.5 }
+          : { extraction: 0.86 },
         missing_required_fields: [],
-        warnings: rawText ? [] : ['No pasted text found. Paste the email text for accurate extraction.'],
+        warnings: [
+          ...(rawText ? [] : ['No pasted text found. Paste the email text for accurate extraction.']),
+          ...(hasLowConfidence
+            ? ['Low confidence extraction. Draft fields were populated for review and manual edits.']
+            : []),
+        ],
       },
       validation_issues: [],
     });

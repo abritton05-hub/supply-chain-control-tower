@@ -6,11 +6,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PrintInventoryTagButton, PrintLocationLabelButton } from '@/components/label-print-buttons';
 import { ScanCameraButton } from '@/components/scan-camera-button';
 import { parseScctBarcodePayload } from '@/lib/barcodes/scct-payload';
+import { archiveInventoryItem } from './actions';
 import type { InventoryRecord } from './types';
 
 type Props = {
   inventory: InventoryRecord[];
   canEditInventory: boolean;
+  canDeleteInventory: boolean;
   initialQuery?: string;
   initialLocation?: string;
   initialBin?: string;
@@ -79,6 +81,7 @@ function findExactInventory(inventory: InventoryRecord[], value: string) {
 export function InventoryClient({
   inventory,
   canEditInventory: canEdit,
+  canDeleteInventory,
   initialQuery = '',
   initialLocation = '',
   initialBin = '',
@@ -98,6 +101,8 @@ export function InventoryClient({
   const [quickAdjustReason, setQuickAdjustReason] = useState('');
   const [quickAdjustMessage, setQuickAdjustMessage] = useState('');
   const [quickAdjustPending, setQuickAdjustPending] = useState(false);
+  const [archivePending, setArchivePending] = useState(false);
+  const [archiveMessage, setArchiveMessage] = useState('');
 
   useEffect(() => {
     setQuery(initialQuery || initialBin);
@@ -229,6 +234,30 @@ export function InventoryClient({
     setQuickAdjustQty('');
     setQuickAdjustReason('');
     setQuickAdjustMessage('');
+  }
+
+  async function handleArchive(item: InventoryRecord) {
+    if (!canDeleteInventory || archivePending) return;
+
+    const label = item.part_number || item.item_id;
+    if (
+      !window.confirm(
+        `Archive ${label}? It will disappear from active inventory and keep transaction history.`
+      )
+    ) {
+      return;
+    }
+
+    setArchivePending(true);
+    setArchiveMessage('');
+
+    try {
+      const result = await archiveInventoryItem(item.item_id);
+      setArchiveMessage(result.message || 'Archive completed.');
+      router.refresh();
+    } finally {
+      setArchivePending(false);
+    }
   }
 
   async function submitQuickAdjust() {
@@ -434,6 +463,11 @@ export function InventoryClient({
       </div>
 
       <div className="space-y-3 lg:hidden">
+        {archiveMessage ? (
+          <div className="erp-panel border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-slate-700">
+            {archiveMessage}
+          </div>
+        ) : null}
         {filteredInventory.length === 0 ? (
           <div className="erp-panel p-5 text-center text-sm text-slate-500">
             No inventory records found for {activeSite}.
@@ -494,6 +528,16 @@ export function InventoryClient({
                     className="erp-action-secondary w-full sm:w-auto"
                     showMessage={false}
                   />
+                  {canDeleteInventory ? (
+                    <button
+                      type="button"
+                      onClick={() => handleArchive(item)}
+                      disabled={archivePending}
+                      className="erp-action-secondary w-full sm:w-auto disabled:opacity-50"
+                    >
+                      {archivePending ? 'Archiving...' : 'Archive'}
+                    </button>
+                  ) : null}
                 </div>
               </article>
             );
@@ -502,6 +546,11 @@ export function InventoryClient({
       </div>
 
       <div className="erp-panel hidden overflow-hidden lg:block">
+        {archiveMessage ? (
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+            {archiveMessage}
+          </div>
+        ) : null}
         <div className="border-b border-slate-200 px-4 py-3">
           <h2 className="text-base font-semibold text-slate-900">{activeSite} Inventory</h2>
           <p className="text-sm text-slate-500">
@@ -580,6 +629,16 @@ export function InventoryClient({
                           <Link href={`/inventory/${item.item_id}`} className="erp-action-primary">
                             Open
                           </Link>
+                          {canDeleteInventory ? (
+                            <button
+                              type="button"
+                              onClick={() => handleArchive(item)}
+                              disabled={archivePending}
+                              className="erp-action-secondary disabled:opacity-50"
+                            >
+                              {archivePending ? 'Archiving...' : 'Archive'}
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

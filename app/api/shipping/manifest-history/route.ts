@@ -258,6 +258,30 @@ async function replaceStopItems(stopId: string, rawItems: unknown[]) {
   return { ok: true, rows: Array.isArray(insertData) ? insertData : [] };
 }
 
+async function deleteStopItems(stopIds: string[]) {
+  if (!stopIds.length) return { ok: true, status: 200 as const };
+
+  const encoded = stopIds.map((id) => `"${id}"`).join(',');
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/delivery_stop_items?stop_id=in.(${encodeURIComponent(encoded)})`,
+    {
+      method: 'DELETE',
+      headers: headers(),
+    }
+  );
+  const data = await readJson(res);
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: (isObject(data) && cleanText(data.message)) || 'Delete stop items failed.',
+    };
+  }
+
+  return { ok: true, status: res.status };
+}
+
 export async function GET() {
   try {
     const forbidden = await requireDeliveryAccess();
@@ -455,6 +479,115 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : 'Update failed.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const body = (await request.json().catch(() => ({}))) as JsonObject;
+    const id = cleanText(body.id);
+    const manifestNumber = cleanText(body.manifest_number);
+    const stopDate = cleanText(body.stop_date);
+
+    if (!id && !manifestNumber) {
+      return NextResponse.json(
+        { ok: false, message: 'id or manifest_number is required.' },
+        { status: 400 }
+      );
+    }
+
+    let query = `${SUPABASE_URL}/rest/v1/shipping_manifest_history?select=id,manifest_number,stop_date,title,reference,notes,from_location,to_location`;
+
+    if (id) {
+      query += `&id=eq.${encodeURIComponent(id)}`;
+    } else {
+      query += `&manifest_number=eq.${encodeURIComponent(manifestNumber)}`;
+      if (stopDate) {
+        query += `&stop_date=eq.${encodeURIComponent(stopDate)}`;
+      }
+    }
+
+    const loadRes = await fetch(query, {
+      method: 'GET',
+      headers: headers(),
+      cache: 'no-store',
+    });
+    const loadData = await readJson(loadRes);
+
+    if (!loadRes.ok) {
+      return NextResponse.json(
+        { ok: false, message: (isObject(loadData) && cleanText(loadData.message)) || 'Load failed.' },
+        { status: loadRes.status }
+      );
+    }
+
+    const rows = (Array.isArray(loadData) ? loadData : []).filter(isObject);
+    const stopIds = rows.map((row) => cleanText(row.id)).filter(Boolean);
+    if (!stopIds.length) {
+      return NextResponse.json({ ok: false, message: 'No matching stop records found.' }, { status: 404 });
+    }
+
+    const stopItemDelete = await deleteStopItems(stopIds);
+    if (!stopItemDelete.ok) {
+      return NextResponse.json(
+        { ok: false, message: stopItemDelete.message || 'Delete failed.' },
+        { status: stopItemDelete.status || 500 }
+      );
+    }
+
+    let deleteUrl = `${SUPABASE_URL}/rest/v1/shipping_manifest_history?`;
+    deleteUrl += id
+      ? `id=eq.${encodeURIComponent(id)}`
+      : `manifest_number=eq.${encodeURIComponent(manifestNumber)}${stopDate ? `&stop_date=eq.${encodeURIComponent(stopDate)}` : ''}`;
+
+    const deleteRes = await fetch(deleteUrl, {
+      method: 'DELETE',
+      headers: headers(),
+    });
+    const deleteData = await readJson(deleteRes);
+
+    if (!deleteRes.ok) {
+      return NextResponse.json(
+        { ok: false, message: (isObject(deleteData) && cleanText(deleteData.message)) || 'Delete failed.' },
+        { status: deleteRes.status }
+      );
+    }
+
+    for (const row of rows) {
+      const logResult = await logTransaction({
+        transaction_type: 'DELIVERY_STOP_UPDATED',
+        transaction_date: cleanText(row.stop_date),
+        description: cleanText(row.title) || cleanText(row.reference) || 'Delivery stop deleted',
+        quantity: null,
+        from_location: cleanText(row.from_location),
+        to_location: cleanText(row.to_location),
+        reference: cleanText(row.manifest_number),
+        notes: `Delivery stop deleted. ${cleanText(row.notes)}`,
+        entity_type: 'shipping_manifest_history',
+        entity_id: cleanText(row.id) || null,
+        details: { ...row, deleted: true },
+        write_inventory_transaction: false,
+        write_activity_log: true,
+      });
+      if (logResult.ok === false) {
+        console.error('Delivery stop delete transaction logging failed.', {
+          id: cleanText(row.id),
+          message: logResult.message,
+        });
+      }
+    }
+
+    return NextResponse.json({ ok: true, deleted_count: stopIds.length });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Delete failed.' },
       { status: 500 }
     );
   }

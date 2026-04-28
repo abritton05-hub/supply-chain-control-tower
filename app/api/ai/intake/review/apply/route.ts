@@ -9,7 +9,14 @@ import {
 
 export const runtime = 'nodejs';
 
-type Workflow = 'receiving' | 'pull_request' | 'delivery';
+type Workflow =
+  | 'receiving'
+  | 'pull_request'
+  | 'delivery'
+  | 'pickup'
+  | 'pickup_delivery'
+  | 'manifest'
+  | 'delivery_receipt';
 
 type ApplyBody = {
   document_id?: string;
@@ -28,6 +35,16 @@ function cleanPhone(value: unknown) {
 
   return (
     raw.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)?.[0] ?? ''
+  );
+}
+
+function isDeliveryWorkflow(workflow: Workflow) {
+  return (
+    workflow === 'delivery' ||
+    workflow === 'pickup' ||
+    workflow === 'pickup_delivery' ||
+    workflow === 'manifest' ||
+    workflow === 'delivery_receipt'
   );
 }
 
@@ -138,6 +155,13 @@ export async function POST(request: Request) {
       });
     }
 
+    if (!isDeliveryWorkflow(body.selected_workflow_type)) {
+      return NextResponse.json(
+        { ok: false, message: 'Unsupported workflow type for draft creation.' },
+        { status: 400 }
+      );
+    }
+
     const extraction = body.extraction ?? {};
     const header = extraction.header ?? {};
     const lineItems = Array.isArray(extraction.line_items) ? extraction.line_items : [];
@@ -167,7 +191,15 @@ export async function POST(request: Request) {
           project_or_work_order: clean(header.project_or_work_order),
           carrier_or_driver: '',
           items: formatLineItems(lineItems),
-          notes: clean(header.notes),
+          line_items: lineItems.map((item: any, index: number) => ({
+            part_number: clean(item.part_number),
+            item_id: clean(item.item_id) || `ai-intake-line-${index + 1}`,
+            description: clean(item.description),
+            quantity: Number(item.qty ?? item.quantity ?? 1) || 1,
+            box_count: 1,
+            notes: clean(item.notes),
+          })),
+          notes: clean(header.notes).replace(/\bai intake\b/gi, '').trim(),
         },
       },
       message: 'Manifest draft created.',

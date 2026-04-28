@@ -8,7 +8,9 @@ import { DELIVERY_DRAFT_STORAGE_KEY } from '@/lib/ai/intake/draft-storage';
 import type { DeliveryDraftPayload } from '@/lib/ai/intake/types';
 import {
   buildShippingManifestLabelPayload,
-  downloadLabelPayloadsCsv
+  downloadLabelPayloadsCsv,
+  downloadSimplePtouchCsv,
+  type SimplePtouchLabelRow,
 } from '@/lib/labels/p-touch';
 import type { DeliveryPageData } from './types';
 
@@ -462,6 +464,34 @@ function buildStopLabelPayloads(row: StopRow) {
   return payloads;
 }
 
+function buildSimplePtouchRows(row: StopRow): SimplePtouchLabelRow[] {
+  const location = row.direction === 'incoming' ? clean(row.toLocation) : clean(row.fromLocation);
+  const reference = clean(row.shipmentTransferId) || clean(row.reference) || clean(row.manifestNumber);
+  const lines = validStructuredLines(row.lineItems);
+
+  if (lines.length) {
+    return lines.map((line) => ({
+      identifier: clean(line.itemId) || clean(line.partNumber) || line.id,
+      part_number: clean(line.partNumber),
+      description: clean(line.description),
+      qty: clean(line.quantity) || '1',
+      location,
+      reference,
+    }));
+  }
+
+  return [
+    {
+      identifier: row.id,
+      part_number: '',
+      description: oneLine(stopItemsText(row)),
+      qty: clean(row.boxCount) || '1',
+      location,
+      reference,
+    },
+  ];
+}
+
 function manifestNumberForDate(date: string, rows: StopRow[], allRows: StopRow[] = rows) {
   const existing = rows
     .filter((row) => row.date === date && row.manifestNumber)
@@ -623,6 +653,26 @@ async function saveManifestRow(row: StopRow, method: 'POST' | 'PATCH') {
 
   const data = await res.json();
   if (!data.ok) throw new Error(data.message || 'Failed to save manifest stop.');
+}
+
+async function deleteManifestStop(stopId: string) {
+  const res = await fetch('/api/shipping/manifest-history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: stopId }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete manifest stop.');
+}
+
+async function deleteManifestReceipt(manifestNumber: string, manifestDate: string) {
+  const res = await fetch('/api/shipping/manifest-history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ manifest_number: manifestNumber, stop_date: manifestDate }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete delivery receipt.');
 }
 
 async function completeManifest(manifestNumber: string, manifestDate: string) {
@@ -1623,6 +1673,8 @@ function StopsTable({
   emptyText,
   onOpen,
   onPrintLabels,
+  onExportPtouchLabels,
+  onDeleteStop,
   onCreateBom,
   onMarkComplete,
   readOnly = false,
@@ -1632,6 +1684,8 @@ function StopsTable({
   emptyText?: string;
   onOpen: (row: StopRow) => void;
   onPrintLabels?: (row: StopRow) => void;
+  onExportPtouchLabels?: (row: StopRow) => void;
+  onDeleteStop?: (row: StopRow) => void;
   onCreateBom?: (row: StopRow) => void;
   onMarkComplete?: (row: StopRow) => void;
   readOnly?: boolean;
@@ -1703,6 +1757,24 @@ function StopsTable({
                             className="erp-action-secondary"
                           >
                             Print Labels
+                          </button>
+                        ) : null}
+                        {onExportPtouchLabels ? (
+                          <button
+                            type="button"
+                            onClick={() => onExportPtouchLabels(row)}
+                            className="erp-action-secondary"
+                          >
+                            Export P-touch Labels
+                          </button>
+                        ) : null}
+                        {onDeleteStop ? (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteStop(row)}
+                            className="erp-action-secondary text-rose-700"
+                          >
+                            Delete
                           </button>
                         ) : null}
                         {row.direction === 'outgoing' && onCreateBom ? (
@@ -1822,7 +1894,7 @@ export function DeliveryClient({
 
       const requestedDate = clean(draft.requested_date) || selectedManifestDate || today();
       const direction: Direction = draft.direction === 'pickup' ? 'incoming' : 'outgoing';
-      const manifestNumber = manifestNumberForDate(requestedDate, activeRows, rows);
+      const manifestNumber = manifestNumberForDate(requestedDate, activeManifestRows(rows), rows);
       const baseRow = emptyStop(direction, manifestNumber, requestedDate, locations);
 
       const pickupLocation = clean(draft.pickup_location);
@@ -1842,6 +1914,21 @@ export function DeliveryClient({
         clean(draft.contact_phone),
         clean(draft.contact_email),
       ].filter(Boolean);
+      const intakeLineItems = Array.isArray(draft.line_items)
+        ? draft.line_items
+            .map((line, index) => ({
+              id: newId(`ai-line-${index + 1}`),
+              stopId: baseRow.id,
+              partNumber: clean(line.part_number),
+              itemId: clean(line.item_id),
+              description: clean(line.description),
+              quantity: String(Number(line.quantity) || 1),
+              boxCount: String(Number(line.box_count) || 1),
+              notes: clean(line.notes),
+              createdAt: new Date().toISOString(),
+            }))
+            .filter((line) => parseQuantity(line.quantity) > 0 && (itemIdentifier(line) || line.description))
+        : [];
 
       const draftRow: StopRow = {
         ...baseRow,
@@ -1857,6 +1944,7 @@ export function DeliveryClient({
         toAddress: toLocation ? addressForLocation(locations, toLocation) : '',
         contact: contactParts.join(' | '),
         items: clean(draft.items),
+        lineItems: intakeLineItems,
         notes: clean(draft.notes),
       };
 
@@ -1870,7 +1958,7 @@ export function DeliveryClient({
       window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
       setIntakeDraftApplied(true);
     }
-  }, [activeRows, dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
+  }, [dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
 
   useEffect(() => {
     if (initialManifestFocusApplied || !focusedManifestNumber || !rows.length) return;
@@ -2219,6 +2307,73 @@ export function DeliveryClient({
     setMessage(`${labelPayloads.length} label record(s) exported for manifest ${manifestNumber}.`);
   }
 
+  function handleExportStopPtouchLabels(row: StopRow) {
+    const rows = buildSimplePtouchRows(row);
+    downloadSimplePtouchCsv(rows);
+    setMessage(`${rows.length} P-touch CSV row(s) exported.`);
+  }
+
+  function handleExportManifestPtouchLabels(manifestRows: StopRow[]) {
+    const rows = manifestRows.flatMap(buildSimplePtouchRows);
+    downloadSimplePtouchCsv(rows);
+    setMessage(`${rows.length} P-touch CSV row(s) exported for manifest.`);
+  }
+
+  async function handleDeleteStop(row: StopRow) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete stop ${row.shipmentTransferId || row.reference || row.id}? This removes it from active manifests and history lists.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Deleting stop...');
+      await deleteManifestStop(row.id);
+      await refreshData();
+      if (selectedRow?.id === row.id) {
+        setSelectedRow(null);
+      }
+      setMessage('Stop deleted.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete stop.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleDeleteManifestReceipt(manifestNumber: string, manifestDate: string) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete delivery receipt ${manifestNumber} for ${manifestDate}? This removes the manifest history records for that date.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Deleting delivery receipt...');
+      await deleteManifestReceipt(manifestNumber, manifestDate);
+      await refreshData();
+      setMessage(`Delivery receipt ${manifestNumber} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete delivery receipt.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
   async function handleMarkStopComplete(row: StopRow) {
     if (!canManageDelivery) {
       setMessage('Warehouse or admin access is required to update delivery records.');
@@ -2400,6 +2555,8 @@ export function DeliveryClient({
             emptyText={`No pickups for ${selectedManifestDate}.`}
             onOpen={setSelectedRow}
             onPrintLabels={handlePrintStopLabels}
+            onExportPtouchLabels={handleExportStopPtouchLabels}
+            onDeleteStop={handleDeleteStop}
             onMarkComplete={handleMarkStopComplete}
           />
         </section>
@@ -2412,6 +2569,8 @@ export function DeliveryClient({
             emptyText={`No drop offs for ${selectedManifestDate}.`}
             onOpen={setSelectedRow}
             onPrintLabels={handlePrintStopLabels}
+            onExportPtouchLabels={handleExportStopPtouchLabels}
+            onDeleteStop={handleDeleteStop}
             onCreateBom={handleCreateBom}
             onMarkComplete={handleMarkStopComplete}
           />
@@ -2512,6 +2671,22 @@ export function DeliveryClient({
                             Print Labels
                           </button>
                         ) : null}
+                        {!isComplete ? (
+                          <button
+                            type="button"
+                            onClick={() => handleExportManifestPtouchLabels(manifestRows)}
+                            className="erp-action-secondary"
+                          >
+                            Export P-touch Labels
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteManifestReceipt(manifestNumber, date)}
+                          className="erp-action-secondary text-rose-700"
+                        >
+                          Delete Receipt
+                        </button>
                       </div>
 
                       <PrintableManifest

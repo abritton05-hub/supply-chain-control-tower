@@ -7,7 +7,14 @@ import {
   RECEIVING_DRAFT_STORAGE_KEY,
 } from '@/lib/ai/intake/draft-storage';
 
-type Workflow = 'receiving' | 'pull_request' | 'delivery';
+type Workflow =
+  | 'receiving'
+  | 'pull_request'
+  | 'delivery'
+  | 'pickup'
+  | 'pickup_delivery'
+  | 'manifest'
+  | 'delivery_receipt';
 
 export default function AiDocumentIntakeClient() {
   const [file, setFile] = useState<File | null>(null);
@@ -120,7 +127,7 @@ export default function AiDocumentIntakeClient() {
       <section className="erp-card p-5">
         <h2 className="text-lg font-semibold text-slate-900">AI Intake</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Paste email text or upload a source file, then process it into the correct workflow draft.
+          Paste text/copied emails or upload screenshots/images/PDFs/files, then process into an editable draft.
         </p>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -134,6 +141,10 @@ export default function AiDocumentIntakeClient() {
               className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
             >
               <option value="delivery">Delivery / Pickup</option>
+              <option value="pickup">Pickup</option>
+              <option value="pickup_delivery">Pickup + Delivery</option>
+              <option value="manifest">Manifest</option>
+              <option value="delivery_receipt">Delivery Receipt</option>
               <option value="receiving">Receiving</option>
               <option value="pull_request">Pull Request</option>
             </select>
@@ -161,7 +172,6 @@ export default function AiDocumentIntakeClient() {
             onChange={(event) => setPastedText(event.target.value)}
             rows={9}
             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            placeholder="Paste email, Teams message, shipment request, POC, SHIP number, S-number, from/to, item, and quantity here."
           />
         </label>
 
