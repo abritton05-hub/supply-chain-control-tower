@@ -98,9 +98,9 @@ async function getManifests() {
 function toHistory(boms: BomHeader[], manifests: ManifestHeader[]): HistoryRecord[] {
   const bomRecords: HistoryRecord[] = boms.map((bom) => ({
     id: `bom-${bom.id}`,
-    type: 'BOM / Release',
+    type: 'Delivery Receipt',
     number: bom.bom_number || '(Auto-numbered)',
-    title: bom.project_job_number || 'Release record',
+    title: bom.project_job_number || 'Delivery receipt',
     date: bom.bom_date,
     status: bom.status || 'Saved',
     direction: 'Release',
@@ -200,7 +200,7 @@ export default async function DeliveryPage({
   return (
     <ModulePageShell
       title="Shipping"
-      subtitle="BOM releases, manifests, pickups, deliveries, and saved movement history"
+      subtitle="Delivery receipts, manifests, pickups, deliveries, and saved movement history"
     >
       <DeliveryClient {...data} canManageDelivery={canManageDelivery(profile.role)} />
     </ModulePageShell>

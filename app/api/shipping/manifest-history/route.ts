@@ -379,6 +379,50 @@ export async function POST(request: Request) {
   }
 }
 
+export async function DELETE(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const { searchParams } = new URL(request.url);
+    const id = cleanText(searchParams.get('id'));
+
+    if (!id) {
+      return NextResponse.json({ ok: false, message: 'Stop id is required.' }, { status: 400 });
+    }
+
+    await fetch(`${SUPABASE_URL}/rest/v1/delivery_stop_items?stop_id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: headers(),
+    });
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/shipping_manifest_history?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+        headers: headers(),
+      }
+    );
+    const data = await readJson(res);
+
+    if (!res.ok) {
+      return NextResponse.json(
+        { ok: false, message: (isObject(data) && cleanText(data.message)) || 'Delete failed.' },
+        { status: res.status }
+      );
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Delete failed.' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function PATCH(request: Request) {
   try {
     const forbidden = await requireDeliveryAccess();

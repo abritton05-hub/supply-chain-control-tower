@@ -24,7 +24,7 @@ export type ManifestHeader = {
 
 export type HistoryRecord = {
   id: string;
-  type: 'BOM / Release' | 'Manifest';
+  type: 'Delivery Receipt' | 'Manifest';
   number: string;
   title: string;
   date: string | null;
