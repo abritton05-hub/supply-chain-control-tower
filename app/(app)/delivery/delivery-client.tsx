@@ -655,6 +655,26 @@ async function saveManifestRow(row: StopRow, method: 'POST' | 'PATCH') {
   if (!data.ok) throw new Error(data.message || 'Failed to save manifest stop.');
 }
 
+async function deleteManifestStop(stopId: string) {
+  const res = await fetch('/api/shipping/manifest-history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: stopId }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete manifest stop.');
+}
+
+async function deleteManifestReceipt(manifestNumber: string, manifestDate: string) {
+  const res = await fetch('/api/shipping/manifest-history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ manifest_number: manifestNumber, stop_date: manifestDate }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete delivery receipt.');
+}
+
 async function completeManifest(manifestNumber: string, manifestDate: string) {
   const res = await fetch('/api/shipping/manifest-history/complete', {
     method: 'POST',
@@ -1654,6 +1674,7 @@ function StopsTable({
   onOpen,
   onPrintLabels,
   onExportPtouchLabels,
+  onDeleteStop,
   onCreateBom,
   onMarkComplete,
   readOnly = false,
@@ -1664,6 +1685,7 @@ function StopsTable({
   onOpen: (row: StopRow) => void;
   onPrintLabels?: (row: StopRow) => void;
   onExportPtouchLabels?: (row: StopRow) => void;
+  onDeleteStop?: (row: StopRow) => void;
   onCreateBom?: (row: StopRow) => void;
   onMarkComplete?: (row: StopRow) => void;
   readOnly?: boolean;
@@ -1744,6 +1766,15 @@ function StopsTable({
                             className="erp-action-secondary"
                           >
                             Export P-touch Labels
+                          </button>
+                        ) : null}
+                        {onDeleteStop ? (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteStop(row)}
+                            className="erp-action-secondary text-rose-700"
+                          >
+                            Delete
                           </button>
                         ) : null}
                         {row.direction === 'outgoing' && onCreateBom ? (
@@ -1883,6 +1914,21 @@ export function DeliveryClient({
         clean(draft.contact_phone),
         clean(draft.contact_email),
       ].filter(Boolean);
+      const intakeLineItems = Array.isArray(draft.line_items)
+        ? draft.line_items
+            .map((line, index) => ({
+              id: newId(`ai-line-${index + 1}`),
+              stopId: baseRow.id,
+              partNumber: clean(line.part_number),
+              itemId: clean(line.item_id),
+              description: clean(line.description),
+              quantity: String(Number(line.quantity) || 1),
+              boxCount: String(Number(line.box_count) || 1),
+              notes: clean(line.notes),
+              createdAt: new Date().toISOString(),
+            }))
+            .filter((line) => parseQuantity(line.quantity) > 0 && (itemIdentifier(line) || line.description))
+        : [];
 
       const draftRow: StopRow = {
         ...baseRow,
@@ -1898,6 +1944,7 @@ export function DeliveryClient({
         toAddress: toLocation ? addressForLocation(locations, toLocation) : '',
         contact: contactParts.join(' | '),
         items: clean(draft.items),
+        lineItems: intakeLineItems,
         notes: clean(draft.notes),
       };
 
@@ -2272,6 +2319,61 @@ export function DeliveryClient({
     setMessage(`${rows.length} P-touch CSV row(s) exported for manifest.`);
   }
 
+  async function handleDeleteStop(row: StopRow) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete stop ${row.shipmentTransferId || row.reference || row.id}? This removes it from active manifests and history lists.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Deleting stop...');
+      await deleteManifestStop(row.id);
+      await refreshData();
+      if (selectedRow?.id === row.id) {
+        setSelectedRow(null);
+      }
+      setMessage('Stop deleted.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete stop.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleDeleteManifestReceipt(manifestNumber: string, manifestDate: string) {
+    if (!canManageDelivery) {
+      setMessage('Warehouse or admin access is required to update delivery records.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete delivery receipt ${manifestNumber} for ${manifestDate}? This removes the manifest history records for that date.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setLoadingLabel('Deleting delivery receipt...');
+      await deleteManifestReceipt(manifestNumber, manifestDate);
+      await refreshData();
+      setMessage(`Delivery receipt ${manifestNumber} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete delivery receipt.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
   async function handleMarkStopComplete(row: StopRow) {
     if (!canManageDelivery) {
       setMessage('Warehouse or admin access is required to update delivery records.');
@@ -2454,6 +2556,7 @@ export function DeliveryClient({
             onOpen={setSelectedRow}
             onPrintLabels={handlePrintStopLabels}
             onExportPtouchLabels={handleExportStopPtouchLabels}
+            onDeleteStop={handleDeleteStop}
             onMarkComplete={handleMarkStopComplete}
           />
         </section>
@@ -2467,6 +2570,7 @@ export function DeliveryClient({
             onOpen={setSelectedRow}
             onPrintLabels={handlePrintStopLabels}
             onExportPtouchLabels={handleExportStopPtouchLabels}
+            onDeleteStop={handleDeleteStop}
             onCreateBom={handleCreateBom}
             onMarkComplete={handleMarkStopComplete}
           />
@@ -2576,6 +2680,13 @@ export function DeliveryClient({
                             Export P-touch Labels
                           </button>
                         ) : null}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteManifestReceipt(manifestNumber, date)}
+                          className="erp-action-secondary text-rose-700"
+                        >
+                          Delete Receipt
+                        </button>
                       </div>
 
                       <PrintableManifest

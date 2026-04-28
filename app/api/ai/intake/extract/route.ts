@@ -48,12 +48,14 @@ function extractEmail(text: string) {
 
 function extractPocName(text: string) {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const explicitPocLine = lines.find((line) => /\b(poc|point of contact|contact)\b/i.test(line));
+  const explicitPocLine = lines.find((line) =>
+    /\b(receiver|poc|point of contact|contact)\b/i.test(line)
+  );
 
   if (!explicitPocLine) return '';
 
   const afterLabel = explicitPocLine
-    .replace(/^.*?\b(?:poc|point of contact|contact)\b\s*[:\-]?\s*/i, '')
+    .replace(/^.*?\b(?:receiver|poc|point of contact|contact)\b\s*[:\-]?\s*/i, '')
     .replace(/[<({].*$/, '')
     .replace(/\b(please|schedule|pickup|pick up|deliver|delivery).*$/i, '')
     .trim();
@@ -68,23 +70,34 @@ function extractPocName(text: string) {
 }
 
 function extractPhone(text: string) {
-  return text.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)?.[0] || '';
+  return (
+    text.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)?.[0] ||
+    text.match(/\b\d{3}[-.\s]?\d{4}\b/)?.[0] ||
+    ''
+  );
+}
+
+function extractLocationPhrase(text: string, pattern: RegExp) {
+  const match = text.match(pattern);
+  const candidate = match?.[1]?.trim() || '';
+  if (!candidate) return '';
+  return normalizeLocation(candidate.replace(/\s+/g, ' ').replace(/[.,;:]$/, ''));
 }
 
 function extractLocations(text: string) {
   const lower = text.toLowerCase();
 
   const fromLocation =
-    text.match(/pick\s*up\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
-    text.match(/pickup\s+from\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
-    text.match(/\bfrom\s+(?:the\s+)?([a-z0-9-]+)/i)?.[1] ||
+    extractLocationPhrase(text, /pick\s*up\s+from\s+(?:the\s+)?([a-z0-9][a-z0-9\s/-]*?)(?=\s+(?:and\s+deliver|to)\b|[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /pickup\s+from\s+(?:the\s+)?([a-z0-9][a-z0-9\s/-]*?)(?=\s+(?:and\s+deliver|to)\b|[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /\bfrom\s+(?:the\s+)?([a-z0-9][a-z0-9\s/-]*?)(?=\s+(?:to|and)\b|[.,;\n\r]|$)/i) ||
     '';
 
   const toLocation =
-    text.match(/taken\s+directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/directly\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/deliver\s+to\s+([a-z0-9-]+)/i)?.[1] ||
-    text.match(/\bto\s+([a-z0-9-]+)/i)?.[1] ||
+    extractLocationPhrase(text, /taken\s+directly\s+to\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /directly\s+to\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /deliver\s+to\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
+    extractLocationPhrase(text, /\bto\s+([a-z0-9][a-z0-9\s/-]*?)(?=[.,;\n\r]|$)/i) ||
     '';
 
   const isPickup =
@@ -92,8 +105,8 @@ function extractLocations(text: string) {
     lower.includes('pick up') ||
     Boolean(fromLocation && toLocation);
 
-  const pickupLocation = fromLocation ? normalizeLocation(fromLocation) : 'WH';
-  const dropoffLocation = toLocation ? normalizeLocation(toLocation) : 'SEA991';
+  const pickupLocation = fromLocation || 'WH';
+  const dropoffLocation = toLocation || 'SEA991';
 
   return {
     direction: isPickup ? 'incoming' : 'outgoing',
@@ -132,8 +145,8 @@ function extractLineItems(text: string): ExtractedLineItem[] {
   const seen = new Set<string>();
 
   const patterns = [
-    /\bqty\s*(\d+)\s+(?:of\s+)?(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
-    /\b(\d+)\s*(?:pcs|pc|pieces|piece|ea|each|x)\s+(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:\s+([^\r\n]+))?/gi,
+    /\bqty\s*(\d+)\s+(?:of\s+)?(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:[ \t]+([^\r\n]+))?/gi,
+    /\b(\d+)\s*(?:pcs|pc|pieces|piece|ea|each|x)\s+(?:PN\s*#?\s*)?([A-Z0-9][A-Z0-9-_./]{2,})(?:[ \t]+([^\r\n]+))?/gi,
   ];
 
   for (const pattern of patterns) {

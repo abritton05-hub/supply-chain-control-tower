@@ -175,6 +175,14 @@ export type DeliveryDraftPayload = {
   project_or_work_order: string;
   carrier_or_driver: string;
   items: string;
+  line_items?: Array<{
+    part_number: string;
+    item_id?: string;
+    description: string;
+    quantity: number;
+    box_count?: number;
+    notes?: string;
+  }>;
   notes: string;
 };
 

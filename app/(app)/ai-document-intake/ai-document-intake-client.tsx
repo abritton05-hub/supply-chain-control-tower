@@ -172,7 +172,6 @@ export default function AiDocumentIntakeClient() {
             onChange={(event) => setPastedText(event.target.value)}
             rows={9}
             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            placeholder="Paste email, Teams message, shipment request, POC, SHIP number, S-number, from/to, item, and quantity here."
           />
         </label>
 
