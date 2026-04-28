@@ -664,6 +664,42 @@ async function saveBomRow(bom: BomDraft) {
   if (!data.ok) throw new Error(data.message || 'Failed to save BOM.');
 }
 
+
+async function logClientActivity(payload: {
+  action_type: string;
+  module: string;
+  record_id?: string;
+  record_label?: string;
+  reference_number?: string;
+  notes?: string;
+  details?: Record<string, unknown>;
+}) {
+  try {
+    await fetch('/api/activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    console.warn('Client activity logging failed.', error);
+  }
+}
+
+async function deleteManifestStop(stopId: string) {
+  const res = await fetch(`/api/shipping/manifest-history?id=${encodeURIComponent(stopId)}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete stop.');
+}
+
+async function deleteBomRow(id: string) {
+  const res = await fetch(`/api/shipping/bom-history?bom_number=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || 'Failed to delete delivery receipt.');
+}
 function printElementById(id: string) {
   const element = document.getElementById(id);
   if (!element) return;
@@ -712,6 +748,12 @@ function printElementById(id: string) {
   printWindow.document.close();
   printWindow.focus();
   printWindow.print();
+  void logClientActivity({
+    action_type: 'MANIFEST_PRINTED',
+    module: 'manifest',
+    record_id: id,
+    record_label: id,
+  });
 }
 
 function StopModal({
@@ -1822,7 +1864,7 @@ export function DeliveryClient({
 
       const requestedDate = clean(draft.requested_date) || selectedManifestDate || today();
       const direction: Direction = draft.direction === 'pickup' ? 'incoming' : 'outgoing';
-      const manifestNumber = manifestNumberForDate(requestedDate, activeRows, rows);
+      const manifestNumber = manifestNumberForDate(requestedDate, activeManifestRows(rows), rows);
       const baseRow = emptyStop(direction, manifestNumber, requestedDate, locations);
 
       const pickupLocation = clean(draft.pickup_location);
@@ -1870,7 +1912,7 @@ export function DeliveryClient({
       window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
       setIntakeDraftApplied(true);
     }
-  }, [activeRows, dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
+  }, [dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
 
   useEffect(() => {
     if (initialManifestFocusApplied || !focusedManifestNumber || !rows.length) return;
@@ -2149,6 +2191,13 @@ export function DeliveryClient({
         stopId: bom.sourceStopId || undefined,
       });
       setMessage(`Signed BOM uploaded for ${bom.bomNumber}.`);
+      await logClientActivity({
+        action_type: 'DELIVERY_RECEIPT_SIGNED_COPY_UPLOADED',
+        module: 'delivery_receipt',
+        record_id: bom.sourceStopId || bom.bomNumber,
+        record_label: bom.bomNumber,
+        reference_number: bom.manifestNumber,
+      });
 
       if (
         signedBomContext &&
@@ -2177,6 +2226,13 @@ export function DeliveryClient({
         stopId: row.id,
       });
       setMessage(`Signed BOM uploaded for stop ${row.id}.`);
+      await logClientActivity({
+        action_type: 'DELIVERY_RECEIPT_SIGNED_COPY_UPLOADED',
+        module: 'delivery_receipt',
+        record_id: row.id,
+        record_label: row.reference || row.id,
+        reference_number: row.manifestNumber,
+      });
       if (
         signedBomContext &&
         signedBomContext.manifestNumber === row.manifestNumber &&
@@ -2205,6 +2261,13 @@ export function DeliveryClient({
 
     downloadLabelPayloadsCsv(labelPayloads, `${row.manifestNumber || 'manifest'}-${row.id}-labels`);
     setMessage(`${labelPayloads.length} label record(s) exported for ${row.manifestNumber || row.id}.`);
+    void logClientActivity({
+      action_type: 'P_TOUCH_LABEL_CSV_EXPORTED',
+      module: 'labels',
+      record_id: row.id,
+      reference_number: row.manifestNumber,
+      details: { count: labelPayloads.length },
+    });
   }
 
   function handlePrintManifestLabels(manifestNumber: string, manifestRows: StopRow[]) {
@@ -2217,6 +2280,13 @@ export function DeliveryClient({
 
     downloadLabelPayloadsCsv(labelPayloads, `${manifestNumber}-labels`);
     setMessage(`${labelPayloads.length} label record(s) exported for manifest ${manifestNumber}.`);
+    void logClientActivity({
+      action_type: 'P_TOUCH_LABEL_CSV_EXPORTED',
+      module: 'labels',
+      record_id: manifestNumber,
+      reference_number: manifestNumber,
+      details: { count: labelPayloads.length },
+    });
   }
 
   async function handleMarkStopComplete(row: StopRow) {
@@ -2305,6 +2375,61 @@ export function DeliveryClient({
       setMessage(`Manifest ${selectedManifestNumber} saved.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Manifest save failed.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+
+
+  async function handleDeleteManifest(manifestNumber: string, manifestRows: StopRow[]) {
+    if (!canManageDelivery) return;
+    if (!window.confirm(`Delete manifest ${manifestNumber} and its stops?`)) return;
+
+    try {
+      setLoadingLabel('Deleting manifest...');
+      for (const row of manifestRows) {
+        await deleteManifestStop(row.id);
+      }
+      await refreshData();
+      setSelectedManifestNumber('');
+      setSelectedRow(null);
+      setMessage(`Manifest ${manifestNumber} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete manifest.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleDeleteStop(row: StopRow) {
+    if (!canManageDelivery) return;
+    if (!window.confirm(`Delete stop ${row.reference || row.id}?`)) return;
+
+    try {
+      setLoadingLabel('Deleting stop...');
+      await deleteManifestStop(row.id);
+      await refreshData();
+      setSelectedRow(null);
+      setMessage('Stop deleted.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete stop.');
+    } finally {
+      setLoadingLabel('');
+    }
+  }
+
+  async function handleDeleteBom(bom: BomDraft) {
+    if (!canManageDelivery) return;
+    if (!window.confirm(`Delete delivery receipt ${bom.bomNumber}?`)) return;
+
+    try {
+      setLoadingLabel('Deleting delivery receipt...');
+      await deleteBomRow(bom.bomNumber);
+      await refreshData();
+      setMessage(`Delivery receipt ${bom.bomNumber} deleted.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete delivery receipt.');
     } finally {
       setLoadingLabel('');
     }
@@ -2512,6 +2637,15 @@ export function DeliveryClient({
                             Print Labels
                           </button>
                         ) : null}
+                        {!isComplete ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteManifest(manifestNumber, manifestRows)}
+                            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                          >
+                            Delete
+                          </button>
+                        ) : null}
                       </div>
 
                       <PrintableManifest
@@ -2567,6 +2701,13 @@ export function DeliveryClient({
                           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                         >
                           Print
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBom(bom)}
+                          className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                        >
+                          Delete
                         </button>
                         <button
                           type="button"

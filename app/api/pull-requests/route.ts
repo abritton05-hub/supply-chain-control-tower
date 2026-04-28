@@ -5,6 +5,7 @@ import { canFulfillPullRequests, canSubmitPullRequests } from '@/lib/auth/roles'
 import { getCurrentUserEmail } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { logTransaction } from '@/lib/transactions/log-transaction';
+import { logActivity } from '@/lib/activity/log-activity';
 
 type PullRequestLineInput = {
   item_id?: string;
@@ -405,6 +406,16 @@ export async function POST(request: Request) {
       });
     }
 
+    const requestActivity = await logActivity({
+      actionType: 'PULL_REQUEST_CREATED',
+      module: 'pull_request',
+      recordId: pullRequest.id,
+      recordLabel: pullRequest.request_number || pullRequest.id,
+      actor: requestedBy,
+      details: { line_count: pullRequestLines.length },
+    });
+    if (!requestActivity.ok) console.warn('Pull request header activity logging failed.', requestActivity.message);
+
     return NextResponse.json({
       ok: true,
       message: `Pull request ${pullRequest.request_number} submitted successfully.`,
@@ -535,6 +546,16 @@ export async function PATCH(request: Request) {
       if (logResult.ok === false) {
         logErrors.push(`${row.id}: ${logResult.message}`);
       }
+
+      const activity = await logActivity({
+        actionType: 'PULL_REQUEST_REJECTED_CANCELLED',
+        module: 'pull_request',
+        recordId: row.id,
+        recordLabel: reference,
+        actor: performedBy,
+        details: { previous_status: previousStatusById.get(row.id) ?? null, next_status: row.status },
+      });
+      if (!activity.ok) console.warn('Pull request cancel activity logging failed.', activity.message);
     }
 
     if (logErrors.length) {

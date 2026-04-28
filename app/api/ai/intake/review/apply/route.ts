@@ -6,6 +6,7 @@ import {
   canSubmitPullRequests,
   type AppRole,
 } from '@/lib/auth/roles';
+import { logActivity } from '@/lib/activity/log-activity';
 
 export const runtime = 'nodejs';
 
@@ -94,6 +95,13 @@ export async function POST(request: Request) {
     }
 
     if (body.review_status === 'rejected') {
+      const activity = await logActivity({
+        actionType: 'AI_INTAKE_DRAFT_REJECTED',
+        module: 'ai_intake',
+        recordId: body.document_id,
+        actor: profile.email || profile.full_name || 'unknown',
+      });
+      if (!activity.ok) console.warn('AI intake reject logging failed.', activity.message);
       return NextResponse.json({
         ok: true,
         route: null,
@@ -103,6 +111,15 @@ export async function POST(request: Request) {
     }
 
     if (body.selected_workflow_type === 'receiving') {
+      const activity = await logActivity({
+        actionType: 'AI_INTAKE_DRAFT_APPLIED',
+        module: 'ai_intake',
+        recordId: body.document_id,
+        recordLabel: 'receiving draft',
+        actor: profile.email || profile.full_name || 'unknown',
+        details: { workflow: 'receiving' },
+      });
+      if (!activity.ok) console.warn('AI intake apply logging failed.', activity.message);
       return NextResponse.json({
         ok: true,
         route: '/receiving',
@@ -123,6 +140,15 @@ export async function POST(request: Request) {
     }
 
     if (body.selected_workflow_type === 'pull_request') {
+      const activity = await logActivity({
+        actionType: 'AI_INTAKE_DRAFT_APPLIED',
+        module: 'ai_intake',
+        recordId: body.document_id,
+        recordLabel: 'pull request draft',
+        actor: profile.email || profile.full_name || 'unknown',
+        details: { workflow: 'pull_request' },
+      });
+      if (!activity.ok) console.warn('AI intake apply logging failed.', activity.message);
       return NextResponse.json({
         ok: true,
         route: '/pull-requests',
@@ -147,6 +173,16 @@ export async function POST(request: Request) {
 
     const pickupLocation = clean(header.pickup_location) || (direction === 'pickup' ? 'WH' : 'SEA991');
     const dropoffLocation = clean(header.dropoff_location) || (direction === 'pickup' ? 'SEA991' : '');
+
+    const activity = await logActivity({
+      actionType: 'AI_INTAKE_DRAFT_APPLIED',
+      module: 'ai_intake',
+      recordId: body.document_id,
+      recordLabel: 'delivery draft',
+      actor: profile.email || profile.full_name || 'unknown',
+      details: { workflow: 'delivery', direction },
+    });
+    if (!activity.ok) console.warn('AI intake apply logging failed.', activity.message);
 
     return NextResponse.json({
       ok: true,

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { canManageDelivery } from '@/lib/auth/roles';
 import { logTransaction } from '@/lib/transactions/log-transaction';
+import { logActivity } from '@/lib/activity/log-activity';
 
 export const runtime = 'nodejs';
 
@@ -455,6 +456,59 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : 'Update failed.' },
+      { status: 500 }
+    );
+  }
+}
+
+
+export async function DELETE(request: Request) {
+  try {
+    const forbidden = await requireDeliveryAccess();
+    if (forbidden) return forbidden;
+
+    assertConfig();
+
+    const { searchParams } = new URL(request.url);
+    const id = cleanText(searchParams.get('id'));
+
+    if (!id) {
+      return NextResponse.json({ ok: false, message: 'id is required.' }, { status: 400 });
+    }
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/shipping_manifest_history?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+        headers: headers(),
+      }
+    );
+
+    const data = await readJson(res);
+
+    if (!res.ok) {
+      return NextResponse.json(
+        { ok: false, message: (isObject(data) && cleanText(data.message)) || 'Delete failed.' },
+        { status: res.status }
+      );
+    }
+
+    const activity = await logActivity({
+      actionType: 'MANIFEST_STOP_DROP_REMOVED',
+      module: 'manifest',
+      recordId: id,
+      recordLabel: id,
+      notes: 'Manifest stop removed/archived.',
+    });
+
+    if (!activity.ok) {
+      console.warn('Manifest stop delete logging failed.', activity.message);
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, message: error instanceof Error ? error.message : 'Delete failed.' },
       { status: 500 }
     );
   }

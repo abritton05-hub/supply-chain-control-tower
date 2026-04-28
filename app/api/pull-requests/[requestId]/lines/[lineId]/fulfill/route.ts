@@ -190,6 +190,19 @@ export async function POST(
       });
     }
 
+    if ((result.request_status || '').toUpperCase() === 'FULFILLED' || (result.request_status || '').toUpperCase() === 'CLOSED') {
+      const requestActivity = await logActivity({
+        actionType: 'PULL_REQUEST_FULFILLED',
+        module: 'pull_request',
+        recordId: requestId,
+        recordLabel: requestId,
+        actor: performedBy,
+      });
+      if (!requestActivity.ok) {
+        console.warn('Pull request fulfilled activity logging failed', requestActivity.message);
+      }
+    }
+
     revalidatePath('/pull-requests');
     revalidatePath(`/pull-requests/${requestId}`);
     revalidatePath('/inventory');

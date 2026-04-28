@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/profile';
 import { canManageDelivery } from '@/lib/auth/roles';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { logActivity } from '@/lib/activity/log-activity';
 
 export const runtime = 'nodejs';
 
@@ -211,6 +212,26 @@ export async function POST(request: Request) {
 
     if (error) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
+    }
+
+
+    const activity = await logActivity({
+      actionType: 'DELIVERY_RECEIPT_SIGNED_COPY_UPLOADED',
+      module: 'delivery_receipt',
+      recordId: data.id,
+      recordLabel: bomNumber || stopId || manifestNumber,
+      referenceNumber: manifestNumber,
+      actor: auth.profile.email || auth.profile.full_name || 'unknown',
+      details: {
+        manifest_number: manifestNumber,
+        bom_number: bomNumber || null,
+        stop_id: stopId || null,
+        file_name: data.file_name,
+      },
+    });
+
+    if (!activity.ok) {
+      console.warn('Signed BOM upload activity logging failed.', activity.message);
     }
 
     return NextResponse.json({ ok: true, row: data });
