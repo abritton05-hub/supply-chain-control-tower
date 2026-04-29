@@ -10,6 +10,7 @@ import {
   buildInventoryPreview,
   cleanInventoryText,
   isBlankInventoryRow,
+  prepareInventoryImportRows,
   toInventoryPayload,
   validateInventoryUsability,
 } from './inventory-import';
@@ -146,6 +147,12 @@ function revalidateInventoryPaths(itemIds: Iterable<string>) {
 
 function inventoryPlace(site: string | null | undefined, binLocation: string | null | undefined) {
   return [cleanInventoryText(site), cleanInventoryText(binLocation)].filter(Boolean).join(' / ') || null;
+}
+
+function inventoryPartSiteKey(partNumber: string | null | undefined, site: string | null | undefined) {
+  const part = cleanInventoryText(partNumber).toLowerCase();
+  if (!part) return '';
+  return `${part}|${normalizeSite(site).toLowerCase()}`;
 }
 
 type ReferenceCheck = {
@@ -513,6 +520,7 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
 
   const byItemId = new Map<string, ExistingInventoryMatch>();
   const byPartNumber = new Map<string, ExistingInventoryMatch>();
+  const byPartNumberSite = new Map<string, ExistingInventoryMatch>();
 
   const supabase = await supabaseAdmin();
 
@@ -534,6 +542,10 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
       }
       if (record.part_number && !byPartNumber.has(record.part_number)) {
         byPartNumber.set(record.part_number, record);
+      }
+      const partSiteKey = inventoryPartSiteKey(record.part_number, record.site || record.location);
+      if (partSiteKey && !byPartNumberSite.has(partSiteKey)) {
+        byPartNumberSite.set(partSiteKey, record);
       }
     });
   }
@@ -557,10 +569,14 @@ async function getExistingInventoryMaps(rows: InventoryImportInput[]) {
       if (record.part_number && !byPartNumber.has(record.part_number)) {
         byPartNumber.set(record.part_number, record);
       }
+      const partSiteKey = inventoryPartSiteKey(record.part_number, record.site || record.location);
+      if (partSiteKey && !byPartNumberSite.has(partSiteKey)) {
+        byPartNumberSite.set(partSiteKey, record);
+      }
     });
   }
 
-  return { byItemId, byPartNumber };
+  return { byItemId, byPartNumber, byPartNumberSite };
 }
 
 function findExistingMatch(
@@ -574,8 +590,10 @@ function findExistingMatch(
     return maps.byItemId.get(itemId);
   }
 
-  if (partNumber && maps.byPartNumber.has(partNumber)) {
-    return maps.byPartNumber.get(partNumber);
+  const partSiteKey = inventoryPartSiteKey(partNumber, row.site || row.location);
+
+  if (partSiteKey && maps.byPartNumberSite.has(partSiteKey)) {
+    return maps.byPartNumberSite.get(partSiteKey);
   }
 
   return undefined;
@@ -924,12 +942,14 @@ export async function importInventoryItems(
       return { ok: false, message: 'Import is limited to 500 rows at a time.' };
     }
 
-    const maps = await getExistingInventoryMaps(inputs);
+    const prepared = prepareInventoryImportRows(inputs);
+    const maps = await getExistingInventoryMaps(prepared.rows);
     const preview = buildInventoryPreview({
-      rows: inputs,
+      rows: prepared.rows,
       existingItemIds: new Set(maps.byItemId.keys()),
-      existingPartNumbers: new Set(maps.byPartNumber.keys()),
+      existingPartNumbers: new Set(maps.byPartNumberSite.keys()),
     });
+    preview.skipReasons.unshift(...prepared.skipReasons);
 
     const rowsToSave = preview.rows
       .filter((row) => row.status !== 'skipped')
@@ -1009,9 +1029,23 @@ export async function importInventoryItems(
           if (existing.part_number && existing.part_number !== updatedMatch.part_number) {
             maps.byPartNumber.delete(existing.part_number);
           }
+          const existingPartSiteKey = inventoryPartSiteKey(
+            existing.part_number,
+            existing.site || existing.location
+          );
+          if (existingPartSiteKey) {
+            maps.byPartNumberSite.delete(existingPartSiteKey);
+          }
           maps.byItemId.set(updatedMatch.item_id, updatedMatch);
           if (updatedMatch.part_number) {
             maps.byPartNumber.set(updatedMatch.part_number, updatedMatch);
+          }
+          const updatedPartSiteKey = inventoryPartSiteKey(
+            updatedMatch.part_number,
+            updatedMatch.site || updatedMatch.location
+          );
+          if (updatedPartSiteKey) {
+            maps.byPartNumberSite.set(updatedPartSiteKey, updatedMatch);
           }
         }
       } else {
@@ -1048,6 +1082,13 @@ export async function importInventoryItems(
           if (inserted.part_number) {
             maps.byPartNumber.set(inserted.part_number, inserted);
           }
+          const insertedPartSiteKey = inventoryPartSiteKey(
+            inserted.part_number,
+            inserted.site || inserted.location
+          );
+          if (insertedPartSiteKey) {
+            maps.byPartNumberSite.set(insertedPartSiteKey, inserted);
+          }
         }
       }
     }
@@ -1059,7 +1100,7 @@ export async function importInventoryItems(
       message:
         saveErrors.length > 0
           ? `Inventory import saved ${saved} row(s); ${saveErrors.length} row(s) could not be saved.`
-          : `Inventory import complete. ${preview.summary.newRecords} new, ${preview.summary.updates} updated, ${preview.summary.incompleteUsable} incomplete but usable, ${preview.summary.skippedBlank + preview.summary.skippedInvalid} skipped.`,
+          : `Inventory import complete. ${preview.summary.newRecords} inserted, ${preview.summary.updates} updated/merged, ${preview.summary.incompleteUsable} incomplete but usable, ${preview.skipReasons.length} skipped/error note(s).`,
       skipReasons: [
         ...preview.skipReasons.map((reason) => `Row ${reason.rowNumber}: ${reason.reason}`),
         ...saveErrors,
@@ -1087,12 +1128,14 @@ export async function previewInventoryImport(
       return { ok: false, message: 'Import is limited to 500 rows at a time.' };
     }
 
-    const maps = await getExistingInventoryMaps(rows);
+    const prepared = prepareInventoryImportRows(rows);
+    const maps = await getExistingInventoryMaps(prepared.rows);
     const preview = buildInventoryPreview({
-      rows,
+      rows: prepared.rows,
       existingItemIds: new Set(maps.byItemId.keys()),
-      existingPartNumbers: new Set(maps.byPartNumber.keys()),
+      existingPartNumbers: new Set(maps.byPartNumberSite.keys()),
     });
+    preview.skipReasons.unshift(...prepared.skipReasons);
 
     const saveableRows = preview.rows.filter((row) => row.status !== 'skipped').length;
 
@@ -1107,7 +1150,7 @@ export async function previewInventoryImport(
 
     return {
       ok: true,
-      message: `Ready to review ${saveableRows} inventory row(s).`,
+      message: `Ready to review ${saveableRows} inventory row(s). ${prepared.skipReasons.length} exact duplicate row(s) will be skipped.`,
       preview,
       summary: preview.summary,
     };

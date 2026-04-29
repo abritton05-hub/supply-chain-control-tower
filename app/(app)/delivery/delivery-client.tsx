@@ -70,6 +70,7 @@ type BomDraft = {
   manifestNumber: string;
   sourceStopId: string;
   createdAt: string;
+  status: string;
   reference: string;
   shipFrom: string;
   shipTo: string;
@@ -105,6 +106,17 @@ function newId(prefix: string) {
 
 function clean(value: string | null | undefined) {
   return value?.trim() || '';
+}
+
+function formatDeliveryReceiptDate(value: string) {
+  const source = value ? new Date(value) : new Date();
+  const date = Number.isNaN(source.getTime()) ? new Date() : source;
+
+  return date.toLocaleDateString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  });
 }
 
 function fixBadEncodingCharacters(text: string) {
@@ -505,6 +517,27 @@ function manifestNumberForDate(date: string, rows: StopRow[], allRows: StopRow[]
   return existing || createManifestNumber(allRows.map((row) => row.manifestNumber).filter(Boolean));
 }
 
+function parseDraftLineItems(items: string, stopId: string): StopLineItem[] {
+  return items
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d+(?:\.\d+)?)x?\s+([A-Z0-9][A-Z0-9._/-]{2,})?\s*(.*)$/i);
+
+      return {
+        ...createEmptyStopLine(stopId),
+        quantity: match?.[1] || '1',
+        partNumber: match?.[2] || '',
+        description: (match?.[3] || line).trim(),
+      };
+    });
+}
+
+function contactFromDeliveryDraft(draft: DeliveryDraftPayload) {
+  return [draft.contact_name, draft.contact_phone, draft.contact_email].map(clean).filter(Boolean).join(' | ');
+}
+
 function rowsForManifest(rows: StopRow[], manifestNumber: string, manifestDate: string) {
   if (!manifestNumber || !manifestDate) return [];
   return rows.filter((row) => row.manifestNumber === manifestNumber && row.date === manifestDate);
@@ -598,6 +631,7 @@ async function loadBomRows(): Promise<BomDraft[]> {
     manifestNumber: row.manifest_number || '',
     sourceStopId: row.source_stop_id || '',
     createdAt: row.created_at || '',
+    status: row.status || 'Saved',
     reference: fixBadEncodingCharacters(row.reference || ''),
     shipFrom: fixBadEncodingCharacters(row.ship_from || ''),
     shipTo: fixBadEncodingCharacters(row.ship_to || ''),
@@ -711,7 +745,11 @@ async function saveBomRow(bom: BomDraft) {
   });
 
   const data = await res.json();
-  if (!data.ok) throw new Error(data.message || 'Failed to save BOM.');
+  if (!data.ok) throw new Error(data.message || 'Failed to save delivery receipt.');
+}
+
+function manifestPrintId(scope: 'modal' | 'history', manifestDate: string, manifestNumber: string) {
+  return `print-manifest-${scope}-${manifestDate || 'Unassigned'}-${manifestNumber || 'Unassigned'}`;
 }
 
 async function deleteBomReceipt(bomNumber: string) {
@@ -727,10 +765,10 @@ async function deleteBomReceipt(bomNumber: string) {
 
 function printElementById(id: string) {
   const element = document.getElementById(id);
-  if (!element) return;
+  if (!element) return false;
 
   const printWindow = window.open('', '_blank', 'width=1100,height=850');
-  if (!printWindow) return;
+  if (!printWindow) return false;
 
   printWindow.document.write(`
     <html>
@@ -773,7 +811,12 @@ function printElementById(id: string) {
 
   printWindow.document.close();
   printWindow.focus();
-  printWindow.print();
+  window.setTimeout(() => {
+    printWindow.focus();
+    printWindow.print();
+  }, 100);
+
+  return true;
 }
 
 function StopModal({
@@ -1403,6 +1446,7 @@ function PrintableItemLines({
 
 function PrintableBom({ bom }: { bom: BomDraft }) {
   const bomLines = parseBomPrintableLines(bom.items || '');
+  const deliveryDate = formatDeliveryReceiptDate(bom.createdAt);
 
   return (
     <div id={`print-bom-${bom.bomNumber}`} className="hidden">
@@ -1417,17 +1461,22 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
             unoptimized
           />
           <div className="title-block">
+<<<<<<< HEAD
             <h1>Delivery Receipt</h1>
             <p>Receipt #: {bom.bomNumber}</p>
+=======
+            <h1>DELIVERY RECEIPT</h1>
+            <p>BOM #: {bom.bomNumber}</p>
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
             <p>Manifest #: {bom.manifestNumber}</p>
           </div>
         </div>
 
         <div className="meta">
-          <MetaCell label="Created" value={bom.createdAt || '-'} />
+          <MetaCell label="Date" value={deliveryDate} />
           <MetaCell label="Reference" value={bom.reference || '-'} />
           <MetaCell label="Contact / POC" value={bom.contact || '-'} />
-          <MetaCell label="Status" value="Release" />
+          <MetaCell label="Status" value={bom.status || 'Saved'} />
         </div>
 
         <div className="meta">
@@ -1473,7 +1522,7 @@ function PrintableBom({ bom }: { bom: BomDraft }) {
           <pre>{bom.notes || '-'}</pre>
         </div>
 
-        <SignatureGrid />
+        <DeliveryReceiptSignatureGrid />
       </div>
     </div>
   );
@@ -1674,6 +1723,7 @@ function SignatureGrid() {
   );
 }
 
+<<<<<<< HEAD
 function ReceiptSignatureGrid() {
   return (
     <div className="signature-grid">
@@ -1682,11 +1732,21 @@ function ReceiptSignatureGrid() {
         <div className="signature-line" />
       </div>
       <div>
+=======
+function DeliveryReceiptSignatureGrid() {
+  return (
+    <div className="signature-grid">
+      <div>
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
         <div className="signature-label">Signature</div>
         <div className="signature-line" />
       </div>
       <div>
+<<<<<<< HEAD
         <div className="signature-label">Date / Time</div>
+=======
+        <div className="signature-label">Date</div>
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
         <div className="signature-line" />
       </div>
     </div>
@@ -1696,6 +1756,7 @@ function ReceiptSignatureGrid() {
 function ManifestModal({
   manifestNumber,
   manifestDate,
+  printId,
   rows,
   viewOnly,
   onClose,
@@ -1705,6 +1766,7 @@ function ManifestModal({
 }: {
   manifestNumber: string;
   manifestDate: string;
+  printId: string;
   rows: StopRow[];
   viewOnly: boolean;
   onClose: () => void;
@@ -1764,15 +1826,26 @@ function ManifestModal({
             onClick={onPrint}
             disabled={!rows.length}
             className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            title={
+              rows.length
+                ? 'Print this manifest'
+                : 'No pickup or drop off rows are available to print for this manifest.'
+            }
           >
             Print Manifest
           </button>
         </div>
 
+        {!rows.length ? (
+          <p className="mt-3 text-right text-sm font-semibold text-slate-500">
+            This manifest has no pickup or drop off rows to print.
+          </p>
+        ) : null}
+
         <PrintableManifest
           manifestNumber={manifestNumber}
           manifestDate={manifestDate}
-          printId={`print-manifest-modal-${manifestDate}-${manifestNumber}`}
+          printId={printId}
           rows={rows}
         />
       </div>
@@ -1896,7 +1969,7 @@ function StopsTable({
                             onClick={() => onCreateBom(row)}
                             className="erp-action-secondary"
                           >
-                            Create BOM
+                            Create Delivery Receipt
                           </button>
                         ) : null}
                         {onMarkComplete ? (
@@ -1991,6 +2064,7 @@ export function DeliveryClient({
   }, []);
 
   useEffect(() => {
+<<<<<<< HEAD
     if (!dataLoaded) return;
     if (intakeDraftApplied) return;
 
@@ -2049,6 +2123,30 @@ export function DeliveryClient({
         date: requestedDate,
         manifestNumber,
         title: clean(draft.company_name) || baseRow.title,
+=======
+    if (!canManageDelivery || locations.length === 0) return;
+
+    const storedDraft = window.localStorage.getItem(DELIVERY_DRAFT_STORAGE_KEY);
+    if (!storedDraft) return;
+
+    try {
+      const draft = JSON.parse(storedDraft) as DeliveryDraftPayload;
+      window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
+
+      const direction: Direction = draft.direction === 'delivery' ? 'outgoing' : 'incoming';
+      const rowDate = clean(draft.requested_date) || selectedManifestDate || today();
+      const manifestNumber = manifestNumberForDate(rowDate, activeManifestRows(rows), rows);
+      const rowId = newId(direction === 'incoming' ? 'pickup' : 'dropoff');
+      const fromLocation = normalizeLocation(clean(draft.pickup_location) || (direction === 'outgoing' ? DEFAULT_SITE : ''));
+      const toLocation = normalizeLocation(clean(draft.dropoff_location) || (direction === 'incoming' ? DEFAULT_SITE : ''));
+
+      const row: StopRow = {
+        id: rowId,
+        manifestNumber,
+        direction,
+        title: direction === 'incoming' ? 'Pickup' : 'Drop Off',
+        date: rowDate,
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
         time: clean(draft.requested_time),
         shipmentTransferId: clean(draft.shipment_transfer_id),
         reference: clean(draft.project_or_work_order) || clean(draft.shipment_transfer_id),
@@ -2056,6 +2154,7 @@ export function DeliveryClient({
         fromAddress: fromLocation ? addressForLocation(locations, fromLocation) : '',
         toLocation,
         toAddress: toLocation ? addressForLocation(locations, toLocation) : '',
+<<<<<<< HEAD
         contact: contactParts.join(' | '),
         items: clean(draft.items),
         lineItems: intakeLineItems,
@@ -2073,6 +2172,26 @@ export function DeliveryClient({
       setIntakeDraftApplied(true);
     }
   }, [dataLoaded, intakeDraftApplied, locations, rows, selectedManifestDate]);
+=======
+        contact: contactFromDeliveryDraft(draft),
+        items: clean(draft.items),
+        boxCount: '1',
+        lineItems: parseDraftLineItems(draft.items, rowId),
+        notes: clean(draft.notes),
+        status: 'Manual',
+        createdAt: new Date().toISOString(),
+      };
+
+      setSelectedManifestDate(rowDate);
+      setSelectedManifestNumber(manifestNumber);
+      setSelectedRow(row);
+      setMessage('AI intake delivery draft loaded. Review the fields before saving.');
+    } catch {
+      window.localStorage.removeItem(DELIVERY_DRAFT_STORAGE_KEY);
+      setMessage('AI intake delivery draft could not be loaded.');
+    }
+  }, [canManageDelivery, locations, rows, selectedManifestDate]);
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
 
   useEffect(() => {
     if (initialManifestFocusApplied || !focusedManifestNumber || !rows.length) return;
@@ -2116,6 +2235,12 @@ export function DeliveryClient({
   );
   const selectedManifestRows = rowsForManifest(rows, selectedManifestNumber, selectedManifestDate);
   const selectedManifestIsComplete = manifestRowsAreComplete(selectedManifestRows);
+  const selectedManifestPrintId = 'print-selected-manifest';
+  const selectedManifestModalPrintId = manifestPrintId(
+    'modal',
+    selectedManifestDate,
+    selectedManifestNumber
+  );
 
   const groupedByDate = useMemo(() => {
     const dateGroups = new Map<string, Map<string, StopRow[]>>();
@@ -2307,7 +2432,7 @@ export function DeliveryClient({
 
   async function handleCreateBom(row: StopRow) {
     if (!canManageDelivery) {
-      setMessage('Warehouse or admin access is required to create BOMs.');
+      setMessage('Warehouse or admin access is required to create delivery receipts.');
       return;
     }
 
@@ -2323,6 +2448,7 @@ export function DeliveryClient({
         manifestNumber: row.manifestNumber,
         sourceStopId: row.id,
         createdAt: new Date().toISOString(),
+        status: 'Saved',
         reference: row.reference || row.shipmentTransferId,
         shipFrom: displayStopAddress(row.fromLocation, row.fromAddress),
         shipTo: displayStopAddress(row.toLocation, row.toAddress),
@@ -2331,12 +2457,12 @@ export function DeliveryClient({
         notes: row.notes,
       };
 
-      setLoadingLabel('Creating BOM...');
+      setLoadingLabel('Creating delivery receipt...');
       await saveBomRow(bom);
       await refreshData();
-      setMessage(`BOM ${bomNumber} created.`);
+      setMessage(`Delivery receipt ${bomNumber} created.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'BOM creation failed.');
+      setMessage(error instanceof Error ? error.message : 'Delivery receipt creation failed.');
     } finally {
       setLoadingLabel('');
     }
@@ -2421,6 +2547,7 @@ export function DeliveryClient({
     setMessage(`${labelPayloads.length} label record(s) exported for manifest ${manifestNumber}.`);
   }
 
+<<<<<<< HEAD
   function handleExportStopPtouchLabels(row: StopRow) {
     const rows = buildSimplePtouchRows(row);
     downloadSimplePtouchCsv(rows);
@@ -2512,6 +2639,17 @@ export function DeliveryClient({
       setMessage(error instanceof Error ? error.message : 'Could not delete delivery receipt.');
     } finally {
       setLoadingLabel('');
+=======
+  function handlePrintManifest(printId: string, manifestRows: StopRow[], manifestNumber: string) {
+    if (!manifestRows.length) {
+      setMessage(`Manifest ${manifestNumber || 'selected'} has no rows to print.`);
+      return;
+    }
+
+    const printed = printElementById(printId);
+    if (!printed) {
+      setMessage(`Print area for manifest ${manifestNumber || 'selected'} was not found.`);
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
     }
   }
 
@@ -2652,14 +2790,31 @@ export function DeliveryClient({
             ) : null}
             <button
               type="button"
-              onClick={() => printElementById('print-selected-manifest')}
+              onClick={() =>
+                handlePrintManifest(
+                  selectedManifestPrintId,
+                  selectedDateManifestRows,
+                  selectedDateManifestNumber
+                )
+              }
               disabled={!selectedDateManifestRows.length}
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title={
+                selectedDateManifestRows.length
+                  ? 'Print selected manifest'
+                  : 'No pickup or drop off rows are available to print for this date.'
+              }
             >
               Print Manifest
             </button>
           </div>
         </div>
+
+        {!selectedDateManifestRows.length ? (
+          <p className="mt-3 text-sm font-semibold text-slate-500">
+            Add at least one pickup or drop off for the selected date before printing a manifest.
+          </p>
+        ) : null}
 
         {message ? (
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
@@ -2753,45 +2908,68 @@ export function DeliveryClient({
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
               {manifestHistoryRows.length ? (
-                manifestHistoryRows.map(({ date, manifestNumber, manifestRows, index, isComplete }) => (
-                  <tr key={`${date}-${manifestNumber}`} className="hover:bg-slate-50">
-                    <td className="px-3 py-3 font-bold text-slate-950">
-                      {index === 0 ? (
-                        <div className="mb-2 text-xs font-bold text-slate-500">{date}</div>
-                      ) : null}
-                      {manifestNumber}
-                    </td>
-                    <td className="px-3 py-3">{manifestRows.length}</td>
-                    <td className="px-3 py-3">
-                      <span
-                        className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold ${
-                          isComplete
-                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                            : 'border-cyan-200 bg-cyan-50 text-cyan-700'
-                        }`}
-                      >
-                        {manifestStatusLabel(manifestRows)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openManifest(manifestNumber, date)}
-                          className={isComplete ? 'erp-action-secondary' : 'erp-action-primary'}
+                manifestHistoryRows.map(({ date, manifestNumber, manifestRows, index, isComplete }) => {
+                  const historyPrintId = manifestPrintId('history', date, manifestNumber);
+                  const printableRows = manifestRows.filter(
+                    (row) => row.manifestNumber === manifestNumber && row.date === date
+                  );
+
+                  return (
+                    <tr key={`${date}-${manifestNumber}`} className="hover:bg-slate-50">
+                      <td className="px-3 py-3 font-bold text-slate-950">
+                        {index === 0 ? (
+                          <div className="mb-2 text-xs font-bold text-slate-500">{date}</div>
+                        ) : null}
+                        {manifestNumber}
+                      </td>
+                      <td className="px-3 py-3">{manifestRows.length}</td>
+                      <td className="px-3 py-3">
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold ${
+                            isComplete
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-cyan-200 bg-cyan-50 text-cyan-700'
+                          }`}
                         >
-                          {isComplete ? 'View' : 'Open'}
-                        </button>
-                        {!isComplete ? (
+                          {manifestStatusLabel(manifestRows)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openManifest(manifestNumber, date)}
+                            className={isComplete ? 'erp-action-secondary' : 'erp-action-primary'}
+                          >
+                            {isComplete ? 'View' : 'Open'}
+                          </button>
+                          {!isComplete ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleMarkManifestComplete(manifestNumber, date, manifestRows)
+                              }
+                              className="erp-action-secondary"
+                            >
+                              Complete
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() =>
-                              handleMarkManifestComplete(manifestNumber, date, manifestRows)
+                              handlePrintManifest(historyPrintId, printableRows, manifestNumber)
                             }
+                            disabled={!printableRows.length}
                             className="erp-action-secondary"
+                            title={
+                              printableRows.length
+                                ? 'Print this manifest'
+                                : 'No pickup or drop off rows are available to print for this manifest.'
+                            }
                           >
-                            Complete
+                            Print
                           </button>
+<<<<<<< HEAD
                         ) : null}
                         <button
                           type="button"
@@ -2829,18 +3007,36 @@ export function DeliveryClient({
                           Delete
                         </button>
                       </div>
+=======
+                          {!isComplete ? (
+                            <button
+                              type="button"
+                              onClick={() => handlePrintManifestLabels(manifestNumber, manifestRows)}
+                              disabled={manifestRows.flatMap(buildStopLabelPayloads).length === 0}
+                              className="erp-action-secondary"
+                            >
+                              Print Labels
+                            </button>
+                          ) : null}
+                        </div>
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
 
-                      <PrintableManifest
-                        manifestNumber={manifestNumber}
-                        manifestDate={date}
-                        printId={`print-manifest-history-${date}-${manifestNumber}`}
-                        rows={manifestRows.filter(
-                          (row) => row.manifestNumber === manifestNumber && row.date === date
-                        )}
-                      />
-                    </td>
-                  </tr>
-                ))
+                        {!printableRows.length ? (
+                          <p className="mt-2 text-xs font-semibold text-slate-500">
+                            No rows are available to print for this manifest.
+                          </p>
+                        ) : null}
+
+                        <PrintableManifest
+                          manifestNumber={manifestNumber}
+                          manifestDate={date}
+                          printId={historyPrintId}
+                          rows={printableRows}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
@@ -2921,7 +3117,11 @@ export function DeliveryClient({
               ) : (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-500">
+<<<<<<< HEAD
                     No delivery receipts created yet. Open a drop off and select Create BOM.
+=======
+                    No delivery receipts created yet. Open a drop off and select Create Delivery Receipt.
+>>>>>>> 23a8eab3 (Fix delivery intake and add P-touch label export)
                   </td>
                 </tr>
               )}
@@ -2933,19 +3133,24 @@ export function DeliveryClient({
       <PrintableManifest
         manifestNumber={selectedDateManifestNumber}
         manifestDate={selectedManifestDate}
-        printId="print-selected-manifest"
+        printId={selectedManifestPrintId}
         rows={selectedDateManifestRows}
       />
 
       <ManifestModal
         manifestNumber={selectedManifestNumber}
         manifestDate={selectedManifestDate}
+        printId={selectedManifestModalPrintId}
         rows={selectedManifestRows}
         viewOnly={selectedManifestIsComplete}
         onClose={() => setSelectedManifestNumber('')}
         onSave={saveSelectedManifest}
         onPrint={() =>
-          printElementById(`print-manifest-modal-${selectedManifestDate}-${selectedManifestNumber}`)
+          handlePrintManifest(
+            selectedManifestModalPrintId,
+            selectedManifestRows,
+            selectedManifestNumber
+          )
         }
         onEditStop={setSelectedRow}
       />

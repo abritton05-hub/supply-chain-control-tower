@@ -73,6 +73,27 @@ function identityForRow(row: InventoryImportInput) {
   );
 }
 
+function exactDuplicateKey(row: InventoryImportInput) {
+  return [
+    cleanInventoryText(row.item_id).toLowerCase(),
+    cleanInventoryText(row.part_number).toLowerCase(),
+    cleanInventoryText(row.description).toLowerCase(),
+    cleanInventoryText(row.category).toLowerCase(),
+    cleanInventoryText(row.site || row.location).toLowerCase(),
+    cleanInventoryText(row.bin_location).toLowerCase(),
+    row.qty_on_hand ?? '',
+    row.reorder_point ?? '',
+    row.is_supply ? '1' : '0',
+  ].join('|');
+}
+
+function mergeDuplicateKey(row: InventoryImportInput) {
+  const partNumber = cleanInventoryText(row.part_number).toLowerCase();
+  const itemId = cleanInventoryText(row.item_id).toLowerCase();
+  const site = normalizeSite(row.site || row.location).toLowerCase();
+  return partNumber ? `part:${partNumber}|site:${site}` : itemId ? `item:${itemId}` : '';
+}
+
 export function cleanInventoryText(value: unknown) {
   if (value === null || value === undefined) return '';
 
@@ -142,6 +163,66 @@ export function toInventoryImportInput(
   };
 }
 
+export function prepareInventoryImportRows(rows: InventoryImportInput[]) {
+  const exactDuplicateRows = new Map<string, number>();
+  const mergedRows = new Map<string, InventoryImportInput>();
+  const preparedRows: InventoryImportInput[] = [];
+  const skipReasons: Array<{ rowNumber: number; reason: string }> = [];
+
+  rows.forEach((row, index) => {
+    const rowNumber = row.source_row_number ?? index + 2;
+
+    if (isBlankInventoryRow(row)) {
+      preparedRows.push(row);
+      return;
+    }
+
+    const exactKey = exactDuplicateKey(row);
+    const previousExactRow = exactDuplicateRows.get(exactKey);
+
+    if (previousExactRow) {
+      skipReasons.push({
+        rowNumber,
+        reason: `Exact duplicate of row ${previousExactRow}; skipped before import.`,
+      });
+      return;
+    }
+
+    exactDuplicateRows.set(exactKey, rowNumber);
+
+    const mergeKey = mergeDuplicateKey(row);
+    const existing = mergeKey ? mergedRows.get(mergeKey) : undefined;
+
+    if (!existing) {
+      preparedRows.push(row);
+      if (mergeKey) mergedRows.set(mergeKey, row);
+      return;
+    }
+
+    existing.qty_on_hand = (existing.qty_on_hand ?? 0) + (row.qty_on_hand ?? 0);
+    existing.import_notes = [
+      ...(existing.import_notes ?? []),
+      `Merged row ${rowNumber} into row ${existing.source_row_number ?? '-'} for the same part/site; quantities combined.`,
+    ];
+
+    if (!cleanInventoryText(existing.description) && cleanInventoryText(row.description)) {
+      existing.description = row.description;
+    }
+    if (!cleanInventoryText(existing.category) && cleanInventoryText(row.category)) {
+      existing.category = row.category;
+    }
+    if (!cleanInventoryText(existing.bin_location) && cleanInventoryText(row.bin_location)) {
+      existing.bin_location = row.bin_location;
+    }
+    if (!cleanInventoryText(existing.site) && cleanInventoryText(row.site)) {
+      existing.site = row.site;
+      existing.location = row.location || row.site;
+    }
+  });
+
+  return { rows: preparedRows, skipReasons };
+}
+
 export function validateInventoryUsability(row: InventoryImportInput) {
   const reasons: string[] = [];
 
@@ -195,7 +276,7 @@ function makePreviewRow(
     rowNumber,
     status,
     identity: identityForRow(record),
-    reasons: reason ? [reason] : [],
+    reasons: [...(reason ? [reason] : []), ...(record.import_notes ?? [])],
     reason,
     record,
   } as unknown as ImportPreviewRow<InventoryImportInput>;
@@ -239,7 +320,7 @@ export function buildInventoryPreview({
     }
 
     const itemId = cleanInventoryText(row.item_id);
-    const partNumber = cleanInventoryText(row.part_number);
+    const partNumber = mergeDuplicateKey(row);
     const exists =
       (itemId && existingItemIds.has(itemId)) ||
       (partNumber && existingPartNumbers.has(partNumber));
@@ -256,7 +337,7 @@ export function buildInventoryPreview({
     } else {
       newRecords += 1;
       previewRows.push(
-        makePreviewRow(rowNumber, 'new', 'New inventory record will be created.', row)
+        makePreviewRow(rowNumber, 'insert', 'New inventory record will be created.', row)
       );
     }
   });

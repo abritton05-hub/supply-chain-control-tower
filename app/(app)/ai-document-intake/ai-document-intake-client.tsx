@@ -69,6 +69,7 @@ export default function AiDocumentIntakeClient() {
           document_id: documentId,
           workflow_type: workflow,
           raw_text: pastedText,
+          source: uploadResult.source,
         }),
       });
 

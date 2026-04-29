@@ -43,6 +43,7 @@ export type InventoryImportField =
 export type InventoryImportInput = InventoryFormInput & {
   source_row_number?: number;
   invalid_reasons?: string[];
+  import_notes?: string[];
 };
 
 export type InventoryActionResult =

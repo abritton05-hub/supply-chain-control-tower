@@ -3,6 +3,16 @@ import { getCurrentUserProfile } from '@/lib/auth/profile';
 
 export const runtime = 'nodejs';
 
+function isTextLikeFile(mime: string, name: string) {
+  return (
+    mime.startsWith('text/') ||
+    mime === 'message/rfc822' ||
+    name.endsWith('.eml') ||
+    name.endsWith('.txt') ||
+    name.endsWith('.csv')
+  );
+}
+
 export async function POST(req: Request) {
   try {
     const profile = await getCurrentUserProfile();
@@ -89,15 +99,19 @@ export async function POST(req: Request) {
     }
 
     const buffer = await file.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString('base64');
+    const fileBuffer = Buffer.from(buffer);
+    const base64 = fileBuffer.toString('base64');
+    const textLike = isTextLikeFile(mime, name);
+    const fileText = textLike ? fileBuffer.toString('utf8').trim() : '';
+    const sourceType = textLike ? 'text' : mime === 'application/pdf' ? 'pdf' : 'image';
 
     return NextResponse.json({
       ok: true,
       document_id: `file-${Date.now()}`,
       source: {
-        source_type: mime === 'application/pdf' ? 'pdf' : 'image',
+        source_type: sourceType,
         file_base64: base64,
-        raw_text: rawText || null,
+        raw_text: [rawText, fileText].filter(Boolean).join('\n\n') || null,
         original_filename: file.name,
         mime_type: file.type || 'application/octet-stream',
       },

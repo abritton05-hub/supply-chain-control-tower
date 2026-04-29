@@ -136,6 +136,7 @@ export type StoredIntakeSource =
       file_base64: string;
       original_filename: string | null;
       mime_type: string;
+      raw_text?: string | null;
     };
 
 export type ReceivingDraftPayload = {

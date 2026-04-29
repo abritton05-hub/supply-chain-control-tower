@@ -4,8 +4,10 @@ import Link from 'next/link';
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
-import { createInventoryItem } from '../inventory/actions';
-import type { InventoryActionResult, InventoryFormInput } from '../inventory/types';
+import { ImportReviewModal } from '@/components/import-review-modal';
+import type { ImportPreview } from '@/lib/import-workflow/types';
+import { createInventoryItem, importInventoryItems, previewInventoryImport } from '../inventory/actions';
+import type { InventoryActionResult, InventoryFormInput, InventoryImportInput } from '../inventory/types';
 
 type Props = {
   initialMode: 'add' | 'adjust';
@@ -15,6 +17,7 @@ type Props = {
 };
 
 type UploadRow = {
+  source_row_number: number;
   part_number: string;
   description: string;
   qty: number;
@@ -74,6 +77,7 @@ export function InventoryAdjustClient({
   const [isPending, startTransition] = useTransition();
 
   const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
+  const [uploadPreview, setUploadPreview] = useState<ImportPreview<InventoryImportInput> | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadDefaultSite, setUploadDefaultSite] = useState('SEA991');
 
@@ -122,7 +126,7 @@ export function InventoryAdjustClient({
     const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 
     const rows: UploadRow[] = json
-      .map((row) => {
+      .map((row, index) => {
         const partNumber =
           readCell(row, ['pn', 'partnumber', 'part', 'itemnumber', 'item']) || '';
 
@@ -135,6 +139,7 @@ export function InventoryAdjustClient({
         const binLocation = readCell(row, ['bin', 'binlocation', 'rack', 'shelf']);
 
         return {
+          source_row_number: index + 2,
           part_number: partNumber,
           description,
           qty,
@@ -145,6 +150,7 @@ export function InventoryAdjustClient({
       .filter((row) => row.part_number);
 
     setUploadRows(rows);
+    setUploadPreview(null);
 
     if (rows.length === 0) {
       setMessage({
@@ -168,40 +174,45 @@ export function InventoryAdjustClient({
     setUploading(true);
     setMessage(null);
 
-    let saved = 0;
-    const failures: string[] = [];
-
-    for (const row of uploadRows) {
-      const result = await createInventoryItem({
-        ...EMPTY_FORM,
-        item_id: row.part_number,
-        part_number: row.part_number,
-        description: row.description,
-        location: row.site,
-        site: row.site,
-        bin_location: row.bin_location,
-        qty_on_hand: row.qty,
-      });
-
-      if (result.ok) {
-        saved += 1;
-      } else {
-        failures.push(`${row.part_number}: ${result.message}`);
-      }
-    }
+    const result = await previewInventoryImport(toInventoryImportInputs(uploadRows));
 
     setUploading(false);
+
+    if (!result.ok || !result.preview) {
+      setMessage({ ok: false, message: result.message });
+      return;
+    }
+
+    setUploadPreview(result.preview);
+    setMessage({ ok: true, message: result.message });
+  }
+
+  function toInventoryImportInputs(rows: UploadRow[]): InventoryImportInput[] {
+    return rows.map((row) => ({
+      ...EMPTY_FORM,
+      item_id: row.part_number,
+      part_number: row.part_number,
+      description: row.description || row.part_number,
+      location: row.site,
+      site: row.site,
+      bin_location: row.bin_location,
+      qty_on_hand: row.qty,
+      source_row_number: row.source_row_number,
+      invalid_reasons: [],
+    }));
+  }
+
+  async function confirmBulkUpload() {
+    setUploading(true);
+    setMessage(null);
+
+    const result = await importInventoryItems(toInventoryImportInputs(uploadRows));
+
+    setUploading(false);
+    setUploadPreview(null);
     setUploadRows([]);
     router.refresh();
-
-    setMessage({
-      ok: failures.length === 0,
-      message:
-        failures.length === 0
-          ? `Bulk upload complete. ${saved} item(s) added.`
-          : `Bulk upload saved ${saved} item(s). ${failures.length} failed.`,
-      skipReasons: failures.slice(0, 5),
-    });
+    setMessage(result);
   }
 
   function submitAddItem() {
@@ -366,12 +377,45 @@ export function InventoryAdjustClient({
                   disabled={uploading}
                   className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-70"
                 >
-                  {uploading ? 'Uploading...' : 'Commit Upload'}
+                  {uploading ? 'Reviewing...' : 'Review Upload'}
                 </button>
               </div>
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {uploadPreview ? (
+        <ImportReviewModal
+          title="Review Inventory Upload"
+          description="Repeated part numbers are merged for this import. Exact duplicate rows are skipped."
+          preview={uploadPreview}
+          columns={[
+            { key: 'part_number', label: 'PN', render: (record) => record.part_number },
+            { key: 'description', label: 'Description', render: (record) => record.description },
+            { key: 'qty_on_hand', label: 'Qty', render: (record) => record.qty_on_hand },
+            { key: 'site', label: 'Site', render: (record) => record.site },
+            { key: 'bin_location', label: 'Bin', render: (record) => record.bin_location },
+          ]}
+          isSaving={uploading}
+          summaryLabels={{
+            newRecords: 'Inserted',
+            updates: 'Updated / Merged',
+            incompleteUsable: 'Incomplete',
+            skippedBlank: 'Blank',
+            skippedInvalid: 'Invalid',
+          }}
+          statusLabels={{
+            insert: 'Insert',
+            update: 'Update / Merge',
+            incomplete: 'Incomplete',
+            skipped: 'Skipped',
+          }}
+          confirmLabel="Commit Upload"
+          saveDescription="Rows marked Insert or Update / Merge will be committed. Exact duplicate rows stay out of inventory."
+          onCancel={() => setUploadPreview(null)}
+          onConfirm={confirmBulkUpload}
+        />
       ) : null}
 
       {mode === 'add' ? (
